@@ -56,6 +56,14 @@ class AssertDifferenceTest < ActiveSupport::TestCase
     end
   end
 
+  def test_assert_difference_retval
+    incremented = assert_difference '@object.num', +1 do
+      @object.increment
+    end
+
+    assert_equal incremented, 1
+  end
+
   def test_assert_difference_with_implicit_difference
     assert_difference '@object.num' do
       @object.increment
@@ -170,5 +178,39 @@ class TestCaseTaggedLoggingTest < ActiveSupport::TestCase
 
   def test_logs_tagged_with_current_test_case
     assert_match "#{self.class}: #{name}\n", @out.string
+  end
+end
+
+class TestOrderTest < ActiveSupport::TestCase
+  def setup
+    @original_test_order = ActiveSupport::TestCase.test_order
+  end
+
+  def teardown
+    ActiveSupport::TestCase.test_order = @original_test_order
+  end
+
+  def test_defaults_to_random
+    ActiveSupport::TestCase.test_order = nil
+
+    assert_equal :random, ActiveSupport::TestCase.test_order
+
+    assert_equal :random, ActiveSupport.test_order
+  end
+
+  def test_test_order_is_global
+    ActiveSupport::TestCase.test_order = :sorted
+
+    assert_equal :sorted, ActiveSupport.test_order
+    assert_equal :sorted, ActiveSupport::TestCase.test_order
+    assert_equal :sorted, self.class.test_order
+    assert_equal :sorted, Class.new(ActiveSupport::TestCase).test_order
+
+    ActiveSupport.test_order = :random
+
+    assert_equal :random, ActiveSupport.test_order
+    assert_equal :random, ActiveSupport::TestCase.test_order
+    assert_equal :random, self.class.test_order
+    assert_equal :random, Class.new(ActiveSupport::TestCase).test_order
   end
 end

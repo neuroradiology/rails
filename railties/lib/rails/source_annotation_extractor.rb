@@ -3,7 +3,7 @@
 #   rake notes
 #   rake notes:optimize
 #
-# and friends. See <tt>rake -T notes</tt> and <tt>railties/lib/tasks/annotations.rake</tt>.
+# and friends. See <tt>rake -T notes</tt> and <tt>railties/lib/rails/tasks/annotations.rake</tt>.
 #
 # Annotation objects are triplets <tt>:line</tt>, <tt>:tag</tt>, <tt>:text</tt> that
 # represent the line where the annotation lives, its tag, and its text. Note
@@ -80,9 +80,8 @@ class SourceAnnotationExtractor
 
   # Returns a hash that maps filenames under +dir+ (recursively) to arrays
   # with their annotations. Only files with annotations are included. Files
-  # with extension +.builder+, +.rb+, +.erb+, +.haml+, +.slim+, +.css+,
-  # +.scss+, +.js+, +.coffee+, +.rake+, +.sass+ and +.less+
-  # are taken into account.
+  # with extension +.builder+, +.rb+, +.rake+, +.yml+, +.yaml+, +.ruby+,
+  # +.css+, +.js+ and +.erb+ are taken into account.
   def find_in(dir)
     results = {}
 

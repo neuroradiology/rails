@@ -16,10 +16,6 @@ module ActionDispatch
         app.app
       end
 
-      def verb
-        super.source.gsub(/[$^]/, '')
-      end
-
       def path
         super.spec.to_s
       end
@@ -28,27 +24,10 @@ module ActionDispatch
         super.to_s
       end
 
-      def regexp
-        __getobj__.path.to_regexp
-      end
-
-      def json_regexp
-        str = regexp.inspect.
-              sub('\\A' , '^').
-              sub('\\Z' , '$').
-              sub('\\z' , '$').
-              sub(/^\// , '').
-              sub(/\/[a-z]*$/ , '').
-              gsub(/\(\?#.+\)/ , '').
-              gsub(/\(\?-\w+:/ , '(').
-              gsub(/\s/ , '')
-        Regexp.new(str).source
-      end
-
       def reqs
         @reqs ||= begin
           reqs = endpoint
-          reqs += " #{constraints.to_s}" unless constraints.empty?
+          reqs += " #{constraints}" unless constraints.empty?
           reqs
         end
       end
@@ -62,7 +41,7 @@ module ActionDispatch
       end
 
       def internal?
-        controller.to_s =~ %r{\Arails/(info|mailers|welcome)} || path =~ %r{\A#{Rails.application.config.assets.prefix}\z}
+        internal
       end
 
       def engine?
@@ -72,7 +51,7 @@ module ActionDispatch
 
     ##
     # This class is just used for displaying route information when someone
-    # executes `rake routes` or looks at the RoutingError page.
+    # executes `rails routes` or looks at the RoutingError page.
     # People should not use this class.
     class RoutesInspector # :nodoc:
       def initialize(routes)
@@ -81,12 +60,10 @@ module ActionDispatch
       end
 
       def format(formatter, filter = nil)
-        routes_to_display = filter_routes(filter)
-
+        routes_to_display = filter_routes(normalize_filter(filter))
         routes = collect_routes(routes_to_display)
-
         if routes.none?
-          formatter.no_routes
+          formatter.no_routes(collect_routes(@routes))
           return formatter.result
         end
 
@@ -103,9 +80,20 @@ module ActionDispatch
 
       private
 
+      def normalize_filter(filter)
+        if filter.is_a?(Hash) && filter[:controller]
+          { controller: /#{filter[:controller].downcase.sub(/_?controller\z/, '').sub('::', '/')}/ }
+        elsif filter
+          { controller: /#{filter}/, action: /#{filter}/, verb: /#{filter}/, name: /#{filter}/, path: /#{filter}/ }
+        end
+      end
+
       def filter_routes(filter)
         if filter
-          @routes.select { |route| route.defaults[:controller] == filter }
+          @routes.select do |route|
+            route_wrapper = RouteWrapper.new(route)
+            filter.any? { |default, value| route_wrapper.send(default) =~ value }
+          end
         else
           @routes
         end
@@ -114,16 +102,13 @@ module ActionDispatch
       def collect_routes(routes)
         routes.collect do |route|
           RouteWrapper.new(route)
-        end.reject do |route|
-          route.internal?
-        end.collect do |route|
+        end.reject(&:internal?).collect do |route|
           collect_engine_routes(route)
 
-          { name:   route.name,
-            verb:   route.verb,
-            path:   route.path,
-            reqs:   route.reqs,
-            regexp: route.json_regexp }
+          { name: route.name,
+            verb: route.verb,
+            path: route.path,
+            reqs: route.reqs }
         end
       end
 
@@ -160,14 +145,18 @@ module ActionDispatch
         @buffer << draw_header(routes)
       end
 
-      def no_routes
-        @buffer << <<-MESSAGE.strip_heredoc
+      def no_routes(routes)
+        @buffer <<
+        if routes.none?
+          <<-MESSAGE.strip_heredoc
           You don't have any routes defined!
 
           Please add some routes in config/routes.rb.
-
-          For more information about routes, see the Rails guide: http://guides.rubyonrails.org/routing.html.
           MESSAGE
+        else
+          "No routes were found for this controller"
+        end
+        @buffer << "For more information about routes, see the Rails guide: http://guides.rubyonrails.org/routing.html."
       end
 
       private
@@ -211,7 +200,7 @@ module ActionDispatch
       def header(routes)
       end
 
-      def no_routes
+      def no_routes(*)
         @buffer << <<-MESSAGE.strip_heredoc
           <p>You don't have any routes defined!</p>
           <ul>

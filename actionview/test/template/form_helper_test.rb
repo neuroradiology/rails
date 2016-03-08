@@ -40,6 +40,9 @@ class FormHelperTest < ActionView::TestCase
           },
           tag: {
             value: "Tag"
+          },
+          post_delegate: {
+            title: 'Delegate model_name title'
           }
         }
       }
@@ -81,6 +84,9 @@ class FormHelperTest < ActionView::TestCase
               body: "Write body here"
             }
           },
+          post_delegate: {
+            title: 'Delegate model_name title'
+          },
           tag: {
             value: "Tag"
           }
@@ -99,7 +105,9 @@ class FormHelperTest < ActionView::TestCase
       }.new
     end
     def @post.to_key; [123]; end
-    def @post.id_before_type_cast; 123; end
+    def @post.id; 0; end
+    def @post.id_before_type_cast; "omg"; end
+    def @post.id_came_from_user?; true; end
     def @post.to_param; '123'; end
 
     @post.persisted   = true
@@ -114,6 +122,10 @@ class FormHelperTest < ActionView::TestCase
 
     @post.tags = []
     @post.tags << Tag.new
+
+    @post_delegator = PostDelegator.new
+
+    @post_delegator.title = 'Hello World'
 
     @car = Car.new("#000FFF")
   end
@@ -247,6 +259,18 @@ class FormHelperTest < ActionView::TestCase
     end
   end
 
+  def test_label_with_non_active_record_object
+    form_for(OpenStruct.new(name:'ok'), as: 'person', url: 'an_url', html: { id: 'create-person' }) do |f|
+      f.label(:name)
+    end
+
+    expected = whole_form("an_url", "create-person", "new_person", method: "post") do
+      '<label for="person_name">Name</label>'
+    end
+
+    assert_dom_equal expected, output_buffer
+  end
+
   def test_label_with_for_attribute_as_symbol
     assert_dom_equal('<label for="my_for">Title</label>', label(:post, :title, nil, for: "my_for"))
   end
@@ -308,7 +332,7 @@ class FormHelperTest < ActionView::TestCase
   def test_label_with_block_and_html
     assert_dom_equal(
       '<label for="post_terms">Accept <a href="/terms">Terms</a>.</label>',
-      label(:post, :terms) { 'Accept <a href="/terms">Terms</a>.'.html_safe }
+      label(:post, :terms) { raw('Accept <a href="/terms">Terms</a>.') }
     )
   end
 
@@ -323,16 +347,32 @@ class FormHelperTest < ActionView::TestCase
     with_locale :label do
       assert_dom_equal(
         '<label for="post_body"><b>Write entire text here</b></label>',
-        label(:post, :body) { |b| "<b>#{b.translation}</b>".html_safe }
+        label(:post, :body) { |b| raw("<b>#{b.translation}</b>") }
       )
     end
   end
 
   def test_label_with_block_in_erb
-    assert_equal(
+    assert_dom_equal(
       %{<label for="post_message">\n  Message\n  <input id="post_message" name="post[message]" type="text" />\n</label>},
       view.render("test/label_with_block")
     )
+  end
+
+  def test_label_with_to_model
+    assert_dom_equal(
+      %{<label for="post_delegator_title">Delegate Title</label>},
+      label(:post_delegator, :title)
+    )
+  end
+
+  def test_label_with_to_model_and_overridden_model_name
+    with_locale :label do
+      assert_dom_equal(
+        %{<label for="post_delegator_title">Delegate model_name title</label>},
+        label(:post_delegator, :title)
+      )
+    end
   end
 
   def test_text_field_placeholder_without_locales
@@ -347,10 +387,26 @@ class FormHelperTest < ActionView::TestCase
     end
   end
 
+  def test_text_field_placeholder_with_locales_and_to_model
+    with_locale :placeholder do
+      assert_dom_equal(
+        '<input id="post_delegator_title" name="post_delegator[title]" placeholder="Delegate model_name title" type="text" value="Hello World" />',
+        text_field(:post_delegator, :title, placeholder: true)
+      )
+    end
+  end
+
   def test_text_field_placeholder_with_human_attribute_name
     with_locale :placeholder do
       assert_dom_equal('<input id="post_cost" name="post[cost]" placeholder="Total cost" type="text" />', text_field(:post, :cost, placeholder: true))
     end
+  end
+
+  def test_text_field_placeholder_with_human_attribute_name_and_to_model
+    assert_dom_equal(
+      '<input id="post_delegator_title" name="post_delegator[title]" placeholder="Delegate Title" type="text" value="Hello World" />',
+      text_field(:post_delegator, :title, placeholder: true)
+    )
   end
 
   def test_text_field_placeholder_with_string_value
@@ -469,22 +525,36 @@ class FormHelperTest < ActionView::TestCase
   def test_text_field_doesnt_change_param_values
     object_name = 'post[]'
     expected = '<input id="post_123_title" name="post[123][title]" type="text" value="Hello World" />'
-    assert_equal expected, text_field(object_name, "title")
-    assert_equal object_name, "post[]"
+    assert_dom_equal expected, text_field(object_name, "title")
+  end
+
+  def test_file_field_does_generate_a_hidden_field
+    expected = '<input name="user[avatar]" type="hidden" value="" /><input id="user_avatar" name="user[avatar]" type="file" />'
+    assert_dom_equal expected, file_field("user", "avatar")
+  end
+
+  def test_file_field_does_not_generate_a_hidden_field_if_included_hidden_option_is_false
+    expected = '<input id="user_avatar" name="user[avatar]" type="file" />'
+    assert_dom_equal expected, file_field("user", "avatar", include_hidden: false)
+  end
+
+  def test_file_field_does_not_generate_a_hidden_field_if_included_hidden_option_is_false_with_key_as_string
+    expected = '<input id="user_avatar" name="user[avatar]" type="file" />'
+    assert_dom_equal expected, file_field("user", "avatar", "include_hidden" => false)
   end
 
   def test_file_field_has_no_size
-    expected = '<input id="user_avatar" name="user[avatar]" type="file" />'
+    expected = '<input name="user[avatar]" type="hidden" value="" /><input id="user_avatar" name="user[avatar]" type="file" />'
     assert_dom_equal expected, file_field("user", "avatar")
   end
 
   def test_file_field_with_multiple_behavior
-    expected = '<input id="import_file" multiple="multiple" name="import[file][]" type="file" />'
+    expected = '<input name="import[file][]" type="hidden" value="" /><input id="import_file" multiple="multiple" name="import[file][]" type="file" />'
     assert_dom_equal expected, file_field("import", "file", :multiple => true)
   end
 
   def test_file_field_with_multiple_behavior_and_explicit_name
-    expected = '<input id="import_file" multiple="multiple" name="custom" type="file" />'
+    expected = '<input name="custom" type="hidden" value="" /><input id="import_file" multiple="multiple" name="custom" type="file" />'
     assert_dom_equal expected, file_field("import", "file", :multiple => true, :name => "custom")
   end
 
@@ -886,9 +956,29 @@ class FormHelperTest < ActionView::TestCase
     )
   end
 
-  def test_text_area_with_value_before_type_cast
+  def test_inputs_use_before_type_cast_to_retain_information_from_validations_like_numericality
     assert_dom_equal(
-      %{<textarea id="post_id" name="post[id]">\n123</textarea>},
+      %{<textarea id="post_id" name="post[id]">\nomg</textarea>},
+      text_area("post", "id")
+    )
+  end
+
+  def test_inputs_dont_use_before_type_cast_when_value_did_not_come_from_user
+    class << @post
+      undef id_came_from_user?
+      def id_came_from_user?; false; end
+    end
+
+    assert_dom_equal(
+      %{<textarea id="post_id" name="post[id]">\n0</textarea>},
+      text_area("post", "id")
+    )
+  end
+
+  def test_inputs_use_before_typecast_when_object_doesnt_respond_to_came_from_user
+    class << @post; undef id_came_from_user?; end
+    assert_dom_equal(
+      %{<textarea id="post_id" name="post[id]">\nomg</textarea>},
       text_area("post", "id")
     )
   end
@@ -927,6 +1017,11 @@ class FormHelperTest < ActionView::TestCase
   def test_search_field
     expected = %{<input id="contact_notes_query" name="contact[notes_query]" type="search" />}
     assert_dom_equal(expected, search_field("contact", "notes_query"))
+  end
+
+  def test_search_field_with_onsearch_value
+    expected = %{<input onsearch="true" type="search" name="contact[notes_query]" id="contact_notes_query" incremental="true" />}
+    assert_dom_equal(expected, search_field("contact", "notes_query", onsearch: true))
   end
 
   def test_telephone_field
@@ -1186,7 +1281,7 @@ class FormHelperTest < ActionView::TestCase
   end
 
   def test_week_field
-    expected = %{<input id="post_written_on" name="post[written_on]" type="week" value="2004-W24" />}
+    expected = %{<input id="post_written_on" name="post[written_on]" type="week" value="2004-W25" />}
     assert_dom_equal(expected, week_field("post", "written_on"))
   end
 
@@ -1197,13 +1292,13 @@ class FormHelperTest < ActionView::TestCase
   end
 
   def test_week_field_with_datetime_value
-    expected = %{<input id="post_written_on" name="post[written_on]" type="week" value="2004-W24" />}
+    expected = %{<input id="post_written_on" name="post[written_on]" type="week" value="2004-W25" />}
     @post.written_on = DateTime.new(2004, 6, 15, 1, 2, 3)
     assert_dom_equal(expected, week_field("post", "written_on"))
   end
 
   def test_week_field_with_extra_attrs
-    expected = %{<input id="post_written_on" step="2" max="2010-W51" min="2000-W06" name="post[written_on]" type="week" value="2004-W24" />}
+    expected = %{<input id="post_written_on" step="2" max="2010-W51" min="2000-W06" name="post[written_on]" type="week" value="2004-W25" />}
     @post.written_on = DateTime.new(2004, 6, 15, 1, 2, 3)
     min_value = DateTime.new(2000, 2, 13)
     max_value = DateTime.new(2010, 12, 23)
@@ -1213,11 +1308,17 @@ class FormHelperTest < ActionView::TestCase
 
   def test_week_field_with_timewithzone_value
     previous_time_zone, Time.zone = Time.zone, 'UTC'
-    expected = %{<input id="post_written_on" name="post[written_on]" type="week" value="2004-W24" />}
+    expected = %{<input id="post_written_on" name="post[written_on]" type="week" value="2004-W25" />}
     @post.written_on = Time.zone.parse('2004-06-15 15:30:45')
     assert_dom_equal(expected, week_field("post", "written_on"))
   ensure
     Time.zone = previous_time_zone
+  end
+
+  def test_week_field_week_number_base
+    expected = %{<input id="post_written_on" name="post[written_on]" type="week" value="2015-W01" />}
+    @post.written_on = DateTime.new(2015, 1, 1, 1, 2, 3)
+    assert_dom_equal(expected, week_field("post", "written_on"))
   end
 
   def test_url_field
@@ -1444,9 +1545,10 @@ class FormHelperTest < ActionView::TestCase
   end
 
   def test_form_for_requires_block
-    assert_raises(ArgumentError) do
-      form_for(:post, @post, html: { id: 'create-post' })
+    error = assert_raises(ArgumentError) do
+      form_for(@post, html: { id: 'create-post' })
     end
+    assert_equal "Missing block", error.message
   end
 
   def test_form_for_requires_arguments
@@ -1482,7 +1584,7 @@ class FormHelperTest < ActionView::TestCase
       "<textarea name='post[body]' id='post_body'>\nBack to the hill and over it again!</textarea>" +
       "<input name='post[secret]' type='hidden' value='0' />" +
       "<input name='post[secret]' checked='checked' type='checkbox' id='post_secret' value='1' />" +
-      "<input name='commit' type='submit' value='Create post' />" +
+      "<input name='commit' data-disable-with='Create post' type='submit' value='Create post' />" +
       "<button name='button' type='submit'>Create post</button>" +
       "<button name='button' type='submit'><span>Create post</span></button>"
     end
@@ -1498,6 +1600,7 @@ class FormHelperTest < ActionView::TestCase
     end
 
     expected = whole_form("/posts", "new_post", "new_post") do
+      "<input type='hidden' name='post[active]' value='' />" +
       "<input id='post_active_true' name='post[active]' type='radio' value='true' />" +
       "<label for='post_active_true'>true</label>" +
       "<input checked='checked' id='post_active_false' name='post[active]' type='radio' value='false' />" +
@@ -1519,6 +1622,7 @@ class FormHelperTest < ActionView::TestCase
     end
 
     expected = whole_form("/posts", "new_post", "new_post") do
+      "<input type='hidden' name='post[active]' value='' />" +
       "<label for='post_active_true'>"+
       "<input id='post_active_true' name='post[active]' type='radio' value='true' />" +
       "true</label>" +
@@ -1544,6 +1648,7 @@ class FormHelperTest < ActionView::TestCase
     end
 
     expected = whole_form("/posts", "new_post_1", "new_post") do
+      "<input type='hidden' name='post[active]' value='' />" +
       "<label for='post_active_true'>"+
       "<input id='post_active_true' name='post[active]' type='radio' value='true' />" +
       "true</label>" +
@@ -1565,6 +1670,7 @@ class FormHelperTest < ActionView::TestCase
     end
 
     expected = whole_form("/posts", "foo_new_post", "new_post") do
+      "<input type='hidden' name='post[active]' value='' />" +
       "<input id='foo_post_active_true' name='post[active]' type='radio' value='true' />" +
       "<label for='foo_post_active_true'>true</label>" +
       "<input checked='checked' id='foo_post_active_false' name='post[active]' type='radio' value='false' />" +
@@ -1583,6 +1689,7 @@ class FormHelperTest < ActionView::TestCase
     end
 
     expected = whole_form("/posts", "new_post", "new_post") do
+      "<input type='hidden' name='post[1][active]' value='' />" +
       "<input id='post_1_active_true' name='post[1][active]' type='radio' value='true' />" +
       "<label for='post_1_active_true'>true</label>" +
       "<input checked='checked' id='post_1_active_false' name='post[1][active]' type='radio' value='false' />" +
@@ -1601,13 +1708,13 @@ class FormHelperTest < ActionView::TestCase
     end
 
     expected = whole_form("/posts", "new_post", "new_post") do
+      "<input name='post[tag_ids][]' type='hidden' value='' />" +
       "<input checked='checked' id='post_tag_ids_1' name='post[tag_ids][]' type='checkbox' value='1' />" +
       "<label for='post_tag_ids_1'>Tag 1</label>" +
       "<input id='post_tag_ids_2' name='post[tag_ids][]' type='checkbox' value='2' />" +
       "<label for='post_tag_ids_2'>Tag 2</label>" +
       "<input checked='checked' id='post_tag_ids_3' name='post[tag_ids][]' type='checkbox' value='3' />" +
-      "<label for='post_tag_ids_3'>Tag 3</label>" +
-      "<input name='post[tag_ids][]' type='hidden' value='' />"
+      "<label for='post_tag_ids_3'>Tag 3</label>"
     end
 
     assert_dom_equal expected, output_buffer
@@ -1625,6 +1732,7 @@ class FormHelperTest < ActionView::TestCase
     end
 
     expected = whole_form("/posts", "new_post", "new_post") do
+      "<input name='post[tag_ids][]' type='hidden' value='' />" +
       "<label for='post_tag_ids_1'>" +
       "<input checked='checked' id='post_tag_ids_1' name='post[tag_ids][]' type='checkbox' value='1' />" +
       "Tag 1</label>" +
@@ -1633,8 +1741,7 @@ class FormHelperTest < ActionView::TestCase
       "Tag 2</label>" +
       "<label for='post_tag_ids_3'>" +
       "<input checked='checked' id='post_tag_ids_3' name='post[tag_ids][]' type='checkbox' value='3' />" +
-      "Tag 3</label>" +
-      "<input name='post[tag_ids][]' type='hidden' value='' />"
+      "Tag 3</label>"
     end
 
     assert_dom_equal expected, output_buffer
@@ -1655,6 +1762,7 @@ class FormHelperTest < ActionView::TestCase
     end
 
     expected = whole_form("/posts", "new_post_1", "new_post") do
+      "<input name='post[tag_ids][]' type='hidden' value='' />"+
       "<label for='post_tag_ids_1'>" +
       "<input checked='checked' id='post_tag_ids_1' name='post[tag_ids][]' type='checkbox' value='1' />" +
       "Tag 1</label>" +
@@ -1664,7 +1772,6 @@ class FormHelperTest < ActionView::TestCase
       "<label for='post_tag_ids_3'>" +
       "<input checked='checked' id='post_tag_ids_3' name='post[tag_ids][]' type='checkbox' value='3' />" +
       "Tag 3</label>" +
-      "<input name='post[tag_ids][]' type='hidden' value='' />"+
       "<input id='post_id' name='post[id]' type='hidden' value='1' />"
     end
 
@@ -1681,9 +1788,9 @@ class FormHelperTest < ActionView::TestCase
     end
 
     expected = whole_form("/posts", "foo_new_post", "new_post") do
+      "<input name='post[tag_ids][]' type='hidden' value='' />" +
       "<input checked='checked' id='foo_post_tag_ids_1' name='post[tag_ids][]' type='checkbox' value='1' />" +
-      "<label for='foo_post_tag_ids_1'>Tag 1</label>" +
-      "<input name='post[tag_ids][]' type='hidden' value='' />"
+      "<label for='foo_post_tag_ids_1'>Tag 1</label>"
     end
 
     assert_dom_equal expected, output_buffer
@@ -1699,9 +1806,9 @@ class FormHelperTest < ActionView::TestCase
     end
 
     expected = whole_form("/posts", "new_post", "new_post") do
+      "<input name='post[1][tag_ids][]' type='hidden' value='' />" +
       "<input checked='checked' id='post_1_tag_ids_1' name='post[1][tag_ids][]' type='checkbox' value='1' />" +
-      "<label for='post_1_tag_ids_1'>Tag 1</label>" +
-      "<input name='post[1][tag_ids][]' type='hidden' value='' />"
+      "<label for='post_1_tag_ids_1'>Tag 1</label>"
     end
 
     assert_dom_equal expected, output_buffer
@@ -1715,7 +1822,7 @@ class FormHelperTest < ActionView::TestCase
     end
 
     expected = whole_form("/posts/123", "create-post", "edit_post", method: "patch", multipart: true) do
-      "<input name='post[file]' type='file' id='post_file' />"
+      "<input name='post[file]' type='hidden' value='' /><input name='post[file]' type='file' id='post_file' />"
     end
 
     assert_dom_equal expected, output_buffer
@@ -1731,7 +1838,7 @@ class FormHelperTest < ActionView::TestCase
     end
 
     expected = whole_form("/posts/123", "edit_post_123", "edit_post", method: "patch", multipart: true) do
-      "<input name='post[comment][file]' type='file' id='post_comment_file' />"
+      "<input name='post[comment][file]' type='hidden' value='' /><input name='post[comment][file]' type='file' id='post_comment_file' />"
     end
 
     assert_dom_equal expected, output_buffer
@@ -1759,7 +1866,7 @@ class FormHelperTest < ActionView::TestCase
 
     expected = whole_form("/posts/44", "edit_post_44", "edit_post", method: "patch") do
       "<input name='post[title]' type='text' id='post_title' value='And his name will be forty and four.' />" +
-      "<input name='commit' type='submit' value='Edit post' />"
+      "<input name='commit' data-disable-with='Edit post' type='submit' value='Edit post' />"
     end
 
     assert_dom_equal expected, output_buffer
@@ -1780,10 +1887,24 @@ class FormHelperTest < ActionView::TestCase
       "<textarea name='other_name[body]' id='other_name_body'>\nBack to the hill and over it again!</textarea>" +
       "<input name='other_name[secret]' value='0' type='hidden' />" +
       "<input name='other_name[secret]' checked='checked' id='other_name_secret' value='1' type='checkbox' />" +
-      "<input name='commit' value='Create post' type='submit' />"
+      "<input name='commit' value='Create post' data-disable-with='Create post' type='submit' />"
     end
 
     assert_dom_equal expected, output_buffer
+  end
+
+  def test_form_tags_do_not_call_private_properties_on_form_object
+    obj = Class.new do
+      private
+
+      def private_property
+        raise "This method should not be called."
+      end
+    end.new
+
+    form_for(obj, as: "other_name", url: '/', html: { id: "edit-other-name" }) do |f|
+      assert_raise(NoMethodError) { f.hidden_field(:private_property) }
+    end
   end
 
   def test_form_for_with_method_as_part_of_html_options
@@ -1851,6 +1972,30 @@ class FormHelperTest < ActionView::TestCase
     assert_dom_equal expected, output_buffer
   end
 
+  def test_form_for_enforce_utf8_true
+    form_for(:post, enforce_utf8: true) do |f|
+      concat f.text_field(:title)
+    end
+
+    expected = whole_form("/", nil, nil, enforce_utf8: true) do
+      "<input name='post[title]' type='text' id='post_title' value='Hello World' />"
+    end
+
+    assert_dom_equal expected, output_buffer
+  end
+
+  def test_form_for_enforce_utf8_false
+    form_for(:post, enforce_utf8: false) do |f|
+      concat f.text_field(:title)
+    end
+
+    expected = whole_form("/", nil, nil, enforce_utf8: false) do
+      "<input name='post[title]' type='text' id='post_title' value='Hello World' />"
+    end
+
+    assert_dom_equal expected, output_buffer
+  end
+
   def test_form_for_with_remote_in_html
     form_for(@post, url: '/', html: { remote: true, id: 'create-post', method: :patch }) do |f|
       concat f.text_field(:title)
@@ -1870,21 +2015,22 @@ class FormHelperTest < ActionView::TestCase
 
   def test_form_for_with_remote_without_html
     @post.persisted = false
-    @post.stubs(:to_key).returns(nil)
-    form_for(@post, remote: true) do |f|
-      concat f.text_field(:title)
-      concat f.text_area(:body)
-      concat f.check_box(:secret)
-    end
+    @post.stub(:to_key, nil) do
+      form_for(@post, remote: true) do |f|
+        concat f.text_field(:title)
+        concat f.text_area(:body)
+        concat f.check_box(:secret)
+      end
 
-    expected =  whole_form("/posts", "new_post", "new_post", remote: true) do
-      "<input name='post[title]' type='text' id='post_title' value='Hello World' />" +
-      "<textarea name='post[body]' id='post_body'>\nBack to the hill and over it again!</textarea>" +
-      "<input name='post[secret]' type='hidden' value='0' />" +
-      "<input name='post[secret]' checked='checked' type='checkbox' id='post_secret' value='1' />"
-    end
+      expected =  whole_form("/posts", "new_post", "new_post", remote: true) do
+        "<input name='post[title]' type='text' id='post_title' value='Hello World' />" +
+        "<textarea name='post[body]' id='post_body'>\nBack to the hill and over it again!</textarea>" +
+        "<input name='post[secret]' type='hidden' value='0' />" +
+        "<input name='post[secret]' checked='checked' type='checkbox' id='post_secret' value='1' />"
+      end
 
-    assert_dom_equal expected, output_buffer
+      assert_dom_equal expected, output_buffer
+    end
   end
 
   def test_form_for_without_object
@@ -1950,7 +2096,7 @@ class FormHelperTest < ActionView::TestCase
     expected = whole_form('/posts/123', 'edit_post_123', 'edit_post', method: 'patch') do
       "<div class='field_with_errors'><label for='post_author_name' class='label'>Author name</label></div>" +
       "<div class='field_with_errors'><input name='post[author_name]' type='text' id='post_author_name' value='' /></div>" +
-      "<input name='commit' type='submit' value='Create post' />"
+      "<input name='commit' data-disable-with='Create post' type='submit' value='Create post' />"
     end
 
     assert_dom_equal expected, output_buffer
@@ -1968,7 +2114,7 @@ class FormHelperTest < ActionView::TestCase
     expected = whole_form('/posts/123', 'edit_post_123', 'edit_post', method: 'patch') do
       "<div class='field_with_errors'><label for='post_author_name' class='label'>Author name</label></div>" +
       "<div class='field_with_errors'><input name='post[author_name]' type='text' id='post_author_name' value='' /></div>" +
-      "<input name='commit' type='submit' value='Create post' />"
+      "<input name='commit' data-disable-with='Create post' type='submit' value='Create post' />"
     end
 
     assert_dom_equal expected, output_buffer
@@ -2087,16 +2233,17 @@ class FormHelperTest < ActionView::TestCase
   def test_submit_with_object_as_new_record_and_locale_strings
     with_locale :submit do
       @post.persisted = false
-      @post.stubs(:to_key).returns(nil)
-      form_for(@post) do |f|
-        concat f.submit
-      end
+      @post.stub(:to_key, nil) do
+        form_for(@post) do |f|
+          concat f.submit
+        end
 
-      expected = whole_form('/posts', 'new_post', 'new_post') do
-        "<input name='commit' type='submit' value='Create Post' />"
-      end
+        expected = whole_form('/posts', 'new_post', 'new_post') do
+          "<input name='commit' data-disable-with='Create Post' type='submit' value='Create Post' />"
+        end
 
-      assert_dom_equal expected, output_buffer
+        assert_dom_equal expected, output_buffer
+      end
     end
   end
 
@@ -2107,7 +2254,7 @@ class FormHelperTest < ActionView::TestCase
       end
 
       expected = whole_form('/posts/123', 'edit_post_123', 'edit_post', method: 'patch') do
-        "<input name='commit' type='submit' value='Confirm Post changes' />"
+      "<input name='commit' data-disable-with='Confirm Post changes' type='submit' value='Confirm Post changes' />"
       end
 
       assert_dom_equal expected, output_buffer
@@ -2121,7 +2268,7 @@ class FormHelperTest < ActionView::TestCase
       end
 
       expected = whole_form do
-        "<input name='commit' class='extra' type='submit' value='Save changes' />"
+      "<input name='commit' class='extra' data-disable-with='Save changes' type='submit' value='Save changes' />"
       end
 
       assert_dom_equal expected, output_buffer
@@ -2135,7 +2282,7 @@ class FormHelperTest < ActionView::TestCase
       end
 
       expected = whole_form('/posts/123', 'edit_another_post', 'edit_another_post', method: 'patch') do
-        "<input name='commit' type='submit' value='Update your Post' />"
+      "<input name='commit' data-disable-with='Update your Post' type='submit' value='Update your Post' />"
       end
 
       assert_dom_equal expected, output_buffer
@@ -2156,6 +2303,27 @@ class FormHelperTest < ActionView::TestCase
 
     assert_dom_equal expected, output_buffer
   end
+
+  def test_deep_nested_fields_for
+    @comment.save
+    form_for(:posts) do |f|
+      f.fields_for('post[]', @post) do |f2|
+        f2.text_field(:id)
+        @post.comments.each do |comment|
+          concat f2.fields_for('comment[]', comment) { |c|
+            concat c.text_field(:name)
+          }
+        end
+      end
+    end
+
+    expected = whole_form do
+      "<input name='posts[post][0][comment][1][name]' type='text' id='posts_post_0_comment_1_name' value='comment #1' />"
+    end
+
+    assert_dom_equal expected, output_buffer
+  end
+
 
   def test_nested_fields_for_with_nested_collections
     form_for(@post, as: 'post[]') do |f|
@@ -2674,11 +2842,12 @@ class FormHelperTest < ActionView::TestCase
   def test_nested_fields_label_translation_with_more_than_10_records
     @post.comments = Array.new(11) { |id| Comment.new(id + 1) }
 
-    I18n.expects(:t).with('post.comments.body', default: [:"comment.body", ''], scope: "helpers.label").times(11).returns "Write body here"
-
-    form_for(@post) do |f|
-      f.fields_for(:comments) do |cf|
-        concat cf.label(:body)
+    params = 11.times.map { ['post.comments.body', default: [:"comment.body", ''], scope: "helpers.label"] }
+    assert_called_with(I18n, :t, params, returns: "Write body here") do
+      form_for(@post) do |f|
+        f.fields_for(:comments) do |cf|
+          concat cf.label(:body)
+        end
       end
     end
   end
@@ -2733,6 +2902,23 @@ class FormHelperTest < ActionView::TestCase
 
     form_for(@post) do |f|
       concat f.fields_for(:comments, Comment.new(321), child_index: 'abc') { |cf|
+        concat cf.text_field(:name)
+      }
+    end
+
+    expected = whole_form('/posts/123', 'edit_post_123', 'edit_post', method: 'patch') do
+      '<input id="post_comments_attributes_abc_name" name="post[comments_attributes][abc][name]" type="text" value="comment #321" />' +
+      '<input id="post_comments_attributes_abc_id" name="post[comments_attributes][abc][id]" type="hidden" value="321" />'
+    end
+
+    assert_dom_equal expected, output_buffer
+  end
+
+  def test_nested_fields_for_with_child_index_as_lambda_option_override_on_a_nested_attributes_collection_association
+    @post.comments = []
+
+    form_for(@post) do |f|
+      concat f.fields_for(:comments, Comment.new(321), child_index: -> { 'abc' } ) { |cf|
         concat cf.text_field(:name)
       }
     end
@@ -3119,6 +3305,30 @@ class FormHelperTest < ActionView::TestCase
     ActionView::Base.default_form_builder = old_default_form_builder
   end
 
+  def test_form_builder_override
+    self.default_form_builder = LabelledFormBuilder
+
+    output_buffer = fields_for(:post, @post) do |f|
+      concat f.text_field(:title)
+    end
+
+    expected = "<label for='title'>Title:</label> <input name='post[title]' type='text' id='post_title' value='Hello World' /><br/>"
+
+    assert_dom_equal expected, output_buffer
+  end
+
+  def test_lazy_loading_form_builder_override
+    self.default_form_builder = "FormHelperTest::LabelledFormBuilder"
+
+    output_buffer = fields_for(:post, @post) do |f|
+      concat f.text_field(:title)
+    end
+
+    expected = "<label for='title'>Title:</label> <input name='post[title]' type='text' id='post_title' value='Hello World' /><br/>"
+
+    assert_dom_equal expected, output_buffer
+  end
+
   def test_fields_for_with_labelled_builder
     output_buffer = fields_for(:post, @post, builder: LabelledFormBuilder) do |f|
       concat f.text_field(:title)
@@ -3196,7 +3406,7 @@ class FormHelperTest < ActionView::TestCase
   def test_form_for_with_string_url_option
     form_for(@post, url: 'http://www.otherdomain.com') do |f| end
 
-    assert_equal whole_form("http://www.otherdomain.com", "edit_post_123", "edit_post", method: "patch"), output_buffer
+    assert_dom_equal whole_form("http://www.otherdomain.com", "edit_post_123", "edit_post", method: "patch"), output_buffer
   end
 
   def test_form_for_with_hash_url_option
@@ -3210,14 +3420,14 @@ class FormHelperTest < ActionView::TestCase
     form_for(@post, url: @post) do |f| end
 
     expected = whole_form("/posts/123", "edit_post_123", "edit_post", method: "patch")
-    assert_equal expected, output_buffer
+    assert_dom_equal expected, output_buffer
   end
 
   def test_form_for_with_existing_object
     form_for(@post) do |f| end
 
     expected = whole_form("/posts/123", "edit_post_123", "edit_post", method: "patch")
-    assert_equal expected, output_buffer
+    assert_dom_equal expected, output_buffer
   end
 
   def test_form_for_with_new_object
@@ -3228,7 +3438,7 @@ class FormHelperTest < ActionView::TestCase
     form_for(post) do |f| end
 
     expected = whole_form("/posts", "new_post", "new_post")
-    assert_equal expected, output_buffer
+    assert_dom_equal expected, output_buffer
   end
 
   def test_form_for_with_existing_object_in_list
@@ -3265,7 +3475,7 @@ class FormHelperTest < ActionView::TestCase
     form_for(@post, url: "/super_posts") do |f| end
 
     expected = whole_form("/super_posts", "edit_post_123", "edit_post", method: "patch")
-    assert_equal expected, output_buffer
+    assert_dom_equal expected, output_buffer
   end
 
   def test_form_for_with_default_method_as_patch
@@ -3300,8 +3510,14 @@ class FormHelperTest < ActionView::TestCase
 
   protected
 
-  def hidden_fields(method = nil)
-    txt = %{<input name="utf8" type="hidden" value="&#x2713;" />}
+  def hidden_fields(options = {})
+    method = options[:method]
+
+    if options.fetch(:enforce_utf8, true)
+      txt = %{<input name="utf8" type="hidden" value="&#x2713;" />}
+    else
+      txt = ''
+    end
 
     if method && !%w(get post).include?(method.to_s)
       txt << %{<input name="_method" type="hidden" value="#{method}" />}
@@ -3325,7 +3541,7 @@ class FormHelperTest < ActionView::TestCase
 
     method, remote, multipart = options.values_at(:method, :remote, :multipart)
 
-    form_text(action, id, html_class, remote, multipart, method) + hidden_fields(method) + contents + "</form>"
+    form_text(action, id, html_class, remote, multipart, method) + hidden_fields(options.slice :method, :enforce_utf8) + contents + "</form>"
   end
 
   def protect_against_forgery?

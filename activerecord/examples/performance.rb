@@ -1,4 +1,3 @@
-require File.expand_path('../../../load_paths', __FILE__)
 require "active_record"
 require 'benchmark/ips'
 
@@ -39,8 +38,8 @@ class Exhibit < ActiveRecord::Base
     where("notes IS NOT NULL")
   end
 
-  def self.look(exhibits) exhibits.each { |e| e.look } end
-  def self.feel(exhibits) exhibits.each { |e| e.feel } end
+  def self.look(exhibits) exhibits.each(&:look) end
+  def self.feel(exhibits) exhibits.each(&:feel) end
 end
 
 def progress_bar(int); print "." if (int%100).zero? ; end

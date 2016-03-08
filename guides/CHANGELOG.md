@@ -1,27 +1,33 @@
-* Change Posts to Articles in Getting Started sample application in order to
-better align with the actual guides.
+## Rails 5.0.0.beta3 (February 24, 2016) ##
 
-    *John Kelly Ferguson*
+*   No changes.
 
-* Update all Rails 4.1.0 references to 4.1.1 within the guides and code.
 
-    *John Kelly Ferguson*
+## Rails 5.0.0.beta2 (February 01, 2016) ##
 
-* Split up rows in the Explain Queries table of the ActiveRecord Querying section
-in order to improve readability.
+*   No changes.
 
-    *John Kelly Ferguson*
 
-*   Change all non-HTTP method 'post' references to 'article'.
+## Rails 5.0.0.beta1 (December 18, 2015) ##
 
-    *John Kelly Ferguson*
+*   Add code of conduct to contributing guide
 
-*   Updates the maintenance policy to match the latest versions of Rails
+    *Jon Moss*
 
-    *Matias Korhonen*
+*   New section in Configuring: Configuring Active Job
 
-*   Switched the order of `Applying a default scope` and `Merging of scopes` subsections so default scopes are introduced first.
+    *Eliot Sykes*
 
-    *Alex Riabov*
+*   New section in Active Record Association Basics: Single Table Inheritance
 
-Please check [4-1-stable](https://github.com/rails/rails/blob/4-1-stable/guides/CHANGELOG.md) for previous changes.
+    *Andrey Nering*
+
+*   New section in Active Record Querying: Understanding The Method Chaining
+
+    *Andrey Nering*
+
+*   New section in Configuring: Search Engines Indexing
+
+    *Andrey Nering*
+
+Please check [4-2-stable](https://github.com/rails/rails/blob/4-2-stable/guides/CHANGELOG.md) for previous changes.

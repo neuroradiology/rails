@@ -103,12 +103,12 @@ module Rails
       #     hook_for :test_framework, as: :controller
       #   end
       #
-      # And now it will lookup at:
+      # And now it will look up at:
       #
       #   "test_unit:controller", "test_unit"
       #
-      # Similarly, if you want it to also lookup in the rails namespace, you just
-      # need to provide the :in value:
+      # Similarly, if you want it to also look up in the rails namespace, you
+      # just need to provide the :in value:
       #
       #   class AwesomeGenerator < Rails::Generators::Base
       #     hook_for :test_framework, in: :rails, as: :controller
@@ -273,7 +273,7 @@ module Rails
 
         # Use Rails default banner.
         def self.banner
-          "rails generate #{namespace.sub(/^rails:/,'')} #{self.arguments.map{ |a| a.usage }.join(' ')} [options]".gsub(/\s+/, ' ')
+          "rails generate #{namespace.sub(/^rails:/,'')} #{self.arguments.map(&:usage).join(' ')} [options]".gsub(/\s+/, ' ')
         end
 
         # Sets the base_name taking into account the current class namespace.
@@ -302,13 +302,13 @@ module Rails
           default_for_option(Rails::Generators.options, name, options, options[:default])
         end
 
-        # Return default aliases for the option name given doing a lookup in
+        # Returns default aliases for the option name given doing a lookup in
         # Rails::Generators.aliases.
         def self.default_aliases_for_option(name, options)
           default_for_option(Rails::Generators.aliases, name, options, options[:aliases])
         end
 
-        # Return default for the option name given doing a lookup in config.
+        # Returns default for the option name given doing a lookup in config.
         def self.default_for_option(config, name, options, default)
           if generator_name and c = config[generator_name.to_sym] and c.key?(name)
             c[name]

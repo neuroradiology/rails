@@ -5,6 +5,7 @@ require 'models/comment'
 require 'models/reply'
 require 'models/author'
 require 'models/developer'
+require 'models/computer'
 
 class NamedScopingTest < ActiveRecord::TestCase
   fixtures :posts, :authors, :topics, :comments, :author_addresses
@@ -132,6 +133,13 @@ class NamedScopingTest < ActiveRecord::TestCase
     assert_equal Post.ranked_by_comments.limit_by(5), Post.top(5)
   end
 
+  def test_scopes_body_is_a_callable
+    e = assert_raises ArgumentError do
+      Class.new(Post).class_eval { scope :containing_the_letter_z, where("body LIKE '%z%'") }
+    end
+    assert_equal "The scope body needs to be callable.", e.message
+  end
+
   def test_active_records_have_scope_named__all__
     assert !Topic.all.empty?
 
@@ -180,8 +188,9 @@ class NamedScopingTest < ActiveRecord::TestCase
   def test_any_should_call_proxy_found_if_using_a_block
     topics = Topic.base
     assert_queries(1) do
-      topics.expects(:empty?).never
-      topics.any? { true }
+      assert_not_called(topics, :empty?) do
+        topics.any? { true }
+      end
     end
   end
 
@@ -209,8 +218,9 @@ class NamedScopingTest < ActiveRecord::TestCase
   def test_many_should_call_proxy_found_if_using_a_block
     topics = Topic.base
     assert_queries(1) do
-      topics.expects(:size).never
-      topics.many? { true }
+      assert_not_called(topics, :size) do
+        topics.many? { true }
+      end
     end
   end
 
@@ -291,9 +301,12 @@ class NamedScopingTest < ActiveRecord::TestCase
       :relation,      # private class method on AR::Base
       :new,           # redefined class method on AR::Base
       :all,           # a default scope
-      :public,
+      :public,        # some imporant methods on Module and Class
       :protected,
-      :private
+      :private,
+      :name,
+      :parent,
+      :superclass
     ]
 
     non_conflicts = [
@@ -306,13 +319,15 @@ class NamedScopingTest < ActiveRecord::TestCase
     ]
 
     conflicts.each do |name|
-      assert_raises(ArgumentError, "scope `#{name}` should not be allowed") do
+      e = assert_raises(ArgumentError, "scope `#{name}` should not be allowed") do
         klass.class_eval { scope name, ->{ where(approved: true) } }
       end
+      assert_match(/You tried to define a scope named \"#{name}\" on the model/, e.message)
 
-      assert_raises(ArgumentError, "scope `#{name}` should not be allowed") do
+      e = assert_raises(ArgumentError, "scope `#{name}` should not be allowed") do
         subklass.class_eval { scope name, ->{ where(approved: true) } }
       end
+      assert_match(/You tried to define a scope named \"#{name}\" on the model/, e.message)
     end
 
     non_conflicts.each do |name|
@@ -369,8 +384,8 @@ class NamedScopingTest < ActiveRecord::TestCase
   end
 
   def test_should_not_duplicates_where_values
-    where_values = Topic.where("1=1").scope_with_lambda.where_values
-    assert_equal ["1=1"], where_values
+    relation = Topic.where("1=1")
+    assert_equal relation.where_clause, relation.scope_with_lambda.where_clause
   end
 
   def test_chaining_with_duplicate_joins
@@ -422,6 +437,25 @@ class NamedScopingTest < ActiveRecord::TestCase
   def test_table_names_for_chaining_scopes_with_and_without_table_name_included
     assert_nothing_raised do
       Comment.for_first_post.for_first_author.to_a
+    end
+  end
+
+  def test_scopes_with_reserved_names
+    class << Topic
+      def public_method; end
+      public :public_method
+
+      def protected_method; end
+      protected :protected_method
+
+      def private_method; end
+      private :private_method
+    end
+
+    [:public_method, :protected_method, :private_method].each do |reserved_method|
+      assert Topic.respond_to?(reserved_method, true)
+      ActiveRecord::Base.logger.expects(:warn)
+      silence_warnings { Topic.scope(reserved_method, -> { }) }
     end
   end
 

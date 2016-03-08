@@ -16,7 +16,7 @@ module ActiveSupport
   #     render text: 'Foo'
   #   end
   #
-  # That executes the block first and notifies all subscribers once done.
+  # That first executes the block and then notifies all subscribers once done.
   #
   # In the example above +render+ is the name of the event, and the rest is called
   # the _payload_. The payload is a mechanism that allows instrumenters to pass
@@ -69,8 +69,8 @@ module ActiveSupport
   # is able to take the arguments as they come and provide an object-oriented
   # interface to that data.
   #
-  # It is also possible to pass an object as the second parameter passed to the
-  # <tt>subscribe</tt> method instead of a block:
+  # It is also possible to pass an object which responds to <tt>call</tt> method
+  # as the second parameter to the <tt>subscribe</tt> method instead of a block:
   #
   #   module ActionController
   #     class PageRequest

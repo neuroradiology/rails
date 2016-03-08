@@ -5,7 +5,7 @@ module ActiveRecord
     class ReferencesStatementsTest < ActiveRecord::TestCase
       include ActiveRecord::Migration::TestHelper
 
-      self.use_transactional_fixtures = false
+      self.use_transactional_tests = false
 
       def setup
         super
@@ -30,19 +30,19 @@ module ActiveRecord
         assert column_exists?(table_name, :taggable_type, :string)
       end
 
-      def test_creates_reference_id_index
-        add_reference table_name, :user, index: true
-        assert index_exists?(table_name, :user_id)
+      def test_does_not_create_reference_id_index_if_index_is_false
+        add_reference table_name, :user, index: false
+        assert_not index_exists?(table_name, :user_id)
       end
 
-      def test_does_not_create_reference_id_index
+      def test_create_reference_id_index_even_if_index_option_is_passed
         add_reference table_name, :user
-        assert_not index_exists?(table_name, :user_id)
+        assert index_exists?(table_name, :user_id)
       end
 
       def test_creates_polymorphic_index
         add_reference table_name, :taggable, polymorphic: true, index: true
-        assert index_exists?(table_name, [:taggable_id, :taggable_type])
+        assert index_exists?(table_name, [:taggable_type, :taggable_id])
       end
 
       def test_creates_reference_type_column_with_default

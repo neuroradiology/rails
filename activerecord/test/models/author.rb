@@ -1,5 +1,6 @@
 class Author < ActiveRecord::Base
   has_many :posts
+  has_many :serialized_posts
   has_one :post
   has_many :very_special_comments, :through => :posts
   has_many :posts_with_comments, -> { includes(:comments) }, :class_name => "Post"
@@ -44,13 +45,14 @@ class Author < ActiveRecord::Base
 
   has_many :special_posts
   has_many :special_post_comments, :through => :special_posts, :source => :comments
+  has_many :special_posts_with_default_scope, :class_name => 'SpecialPostWithDefaultScope'
 
   has_many :sti_posts, :class_name => 'StiPost'
   has_many :sti_post_comments, :through => :sti_posts, :source => :comments
 
-  has_many :special_nonexistant_posts, -> { where("posts.body = 'nonexistant'") }, :class_name => "SpecialPost"
-  has_many :special_nonexistant_post_comments, -> { where('comments.post_id' => 0) }, :through => :special_nonexistant_posts, :source => :comments
-  has_many :nonexistant_comments, :through => :posts
+  has_many :special_nonexistent_posts, -> { where("posts.body = 'nonexistent'") }, :class_name => "SpecialPost"
+  has_many :special_nonexistent_post_comments, -> { where('comments.post_id' => 0) }, :through => :special_nonexistent_posts, :source => :comments
+  has_many :nonexistent_comments, :through => :posts
 
   has_many :hello_posts, -> { where "posts.body = 'hello'" }, :class_name => "Post"
   has_many :hello_post_comments, :through => :hello_posts, :source => :comments
@@ -73,7 +75,7 @@ class Author < ActiveRecord::Base
   has_many :posts_with_multiple_callbacks, :class_name => "Post",
            :before_add => [:log_before_adding, Proc.new {|o, r| o.post_log << "before_adding_proc#{r.id || '<new>'}"}],
            :after_add  => [:log_after_adding,  Proc.new {|o, r| o.post_log << "after_adding_proc#{r.id || '<new>'}"}]
-  has_many :unchangable_posts, :class_name => "Post", :before_add => :raise_exception, :after_add => :log_after_adding
+  has_many :unchangeable_posts, :class_name => "Post", :before_add => :raise_exception, :after_add => :log_after_adding
 
   has_many :categorizations
   has_many :categories, :through => :categorizations
@@ -142,8 +144,13 @@ class Author < ActiveRecord::Base
 
   has_many :posts_with_signature, ->(record) { where("posts.title LIKE ?", "%by #{record.name.downcase}%") }, class_name: "Post"
 
-  scope :relation_include_posts, -> { includes(:posts) }
-  scope :relation_include_tags,  -> { includes(:tags) }
+  has_many :posts_with_extension, -> { order(:title) }, class_name: "Post" do
+    def extension_method; end
+  end
+
+  has_many :posts_with_extension_and_instance, ->(record) { order(:title) }, class_name: "Post" do
+    def extension_method; end
+  end
 
   attr_accessor :post_log
   after_initialize :set_post_log

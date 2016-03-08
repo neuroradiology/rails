@@ -51,27 +51,14 @@ connections:
       password: arunit
       database: arunit2
 
-  mysql:
-    arunit:
-      username: rails
-      encoding: utf8
-    arunit2:
-      username: rails
-      encoding: utf8
-
   mysql2:
     arunit:
       username: rails
       encoding: utf8
+      collation: utf8_unicode_ci
     arunit2:
       username: rails
       encoding: utf8
-
-  openbase:
-    arunit:
-      username: admin
-    arunit2:
-      username: admin
 
   oracle:
      arunit:

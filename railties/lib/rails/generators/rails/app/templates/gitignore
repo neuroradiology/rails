@@ -14,5 +14,12 @@
 
 <% end -%>
 # Ignore all logfiles and tempfiles.
-/log/*.log
-/tmp
+/log/*
+/tmp/*
+<% if keeps? -%>
+!/log/.keep
+!/tmp/.keep
+<% end -%>
+
+# Ignore Byebug command history file.
+.byebug_history

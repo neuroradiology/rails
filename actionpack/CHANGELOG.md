@@ -1,349 +1,755 @@
-*   Allow `config.action_dispatch.trusted_proxies` to accept an IPAddr object.
+*   Add `action_dispatch_integration_test` load hook. The hook can be used to
+    extend `ActionDispatch::IntegrationTest` once it has been loaded.
 
-    Example:
+    *Yuichiro Kaneko*
 
-        # config/environments/production.rb
-        config.action_dispatch.trusted_proxies = IPAddr.new('4.8.15.0/16')
+*   Update default rendering policies when the controller action did
+    not explicitly indicate a response.
 
-    *Sam Aarons*
+    For API controllers, the implicit render always renders "204 No Content"
+    and does not account for any templates.
 
-*   Avoid duplicating routes for HEAD requests.
+    For other controllers, the following conditions are checked:
 
-    Instead of duplicating the routes, we will first match the HEAD request to
-    HEAD routes. If no match is found, we will then map the HEAD request to
-    GET routes.
+    First, if a template exists for the controller action, it is rendered.
+    This template lookup takes into account the action name, locales, format,
+    variant, template handlers, etc. (see +render+ for details).
 
-    *Guo Xiang Tan*, *Andrew White*
+    Second, if other templates exist for the controller action but is not in
+    the right format (or variant, etc.), an <tt>ActionController::UnknownFormat</tt>
+    is raised. The list of available templates is assumed to be a complete
+    enumeration of all the possible formats (or variants, etc.); that is,
+    having only HTML and JSON templates indicate that the controller action is
+    not meant to handle XML requests.
 
-*   Requests that hit `ActionDispatch::Static` can now take advantage
-    of gzipped assets on disk. By default a gzip asset will be served if
-    the client supports gzip and a compressed file is on disk.
+    Third, if the current request is an "interactive" browser request (the user
+    navigated here by entering the URL in the address bar, submiting a form,
+    clicking on a link, etc. as opposed to an XHR or non-browser API request),
+    <tt>ActionView::UnknownFormat</tt> is raised to display a helpful error
+    message.
 
-    *Richard Schneeman*
+    Finally, it falls back to the same "204 No Content" behavior as API controllers.
 
-*   `ActionController::Parameters` will stop inheriting from `Hash` and
-    `HashWithIndifferentAccess` in the next major release. If you use any method
-    that is not available on `ActionController::Parameters` you should consider
-    calling `#to_h` to convert it to a `Hash` first before calling that method.
+    *Godfrey Chan*, *Jon Moss*, *Kasper Timm Hansen*, *Mike Clark*, *Matthew Draper*
 
-    *Prem Sichanugrist*
+## Rails 5.0.0.beta3 (February 24, 2016) ##
 
-*   `ActionController::Parameters#to_h` now returns a `Hash` with unpermitted
-    keys removed. This change is to reflect on a security concern where some
-    method performed on an `ActionController::Parameters` may yield a `Hash`
-    object which does not maintain `permitted?` status. If you would like to
-    get a `Hash` with all the keys intact, duplicate and mark it as permitted
-    before calling `#to_h`.
+*   Add application/gzip as a default mime type.
 
-        params = ActionController::Parameters.new({
-          name: 'Senjougahara Hitagi',
-          oddity: 'Heavy stone crab'
-        })
-        params.to_h
-        # => {}
+    *Mehmet Emin İNAÇ*
 
-        unsafe_params = params.dup.permit!
-        unsafe_params.to_h
-        # => {"name"=>"Senjougahara Hitagi", "oddity"=>"Heavy stone crab"}
+*   Add request encoding and response parsing to integration tests.
 
-        safe_params = params.permit(:name)
-        safe_params.to_h
-        # => {"name"=>"Senjougahara Hitagi"}
+    What previously was:
 
-    This change is consider a stopgap as we cannot change the code to stop
-    `ActionController::Parameters` to inherit from `HashWithIndifferentAccess`
-    in the next minor release.
+    ```ruby
+    require 'test_helper'
 
-    *Prem Sichanugrist*
+    class ApiTest < ActionDispatch::IntegrationTest
+      test 'creates articles' do
+        assert_difference -> { Article.count } do
+          post articles_path(format: :json),
+            params: { article: { title: 'Ahoy!' } }.to_json,
+            headers: { 'Content-Type' => 'application/json' }
+        end
 
-*   Deprecated `TagAssertions`.
+        assert_equal({ 'id' => Article.last.id, 'title' => 'Ahoy!' }, JSON.parse(response.body))
+      end
+    end
+    ```
+
+    Can now be written as:
+
+    ```ruby
+    require 'test_helper'
+
+    class ApiTest < ActionDispatch::IntegrationTest
+      test 'creates articles' do
+        assert_difference -> { Article.count } do
+          post articles_path, params: { article: { title: 'Ahoy!' } }, as: :json
+        end
+
+        assert_equal({ 'id' => Article.last.id, 'title' => 'Ahoy!' }, response.parsed_body)
+      end
+    end
+    ```
+
+    Passing `as: :json` to integration test request helpers will set the format,
+    content type and encode the parameters as JSON.
+
+    Then on the response side, `parsed_body` will parse the body according to the
+    content type the response has.
+
+    Currently JSON is the only supported MIME type. Add your own with
+    `ActionDispatch::IntegrationTest.register_encoder`.
 
     *Kasper Timm Hansen*
 
-*   Use the Active Support JSON encoder for cookie jars using the `:json` or
-    `:hybrid` serializer. This allows you to serialize custom Ruby objects into
-    cookies by defining the `#as_json` hook on such objects.
+*   Add image/svg+xml as a default mime type.
 
-    Fixes #16520.
+    *DHH*
 
-    *Godfrey Chan*
+## Rails 5.0.0.beta2 (February 01, 2016) ##
 
-*   Add `config.action_dispatch.cookies_digest` option for setting custom
-    digest. The default remains the same - 'SHA1'.
+*   Add `-g` and `-c` options to `bin/rails routes`. These options return the url `name`, `verb` and
+    `path` field that match the pattern or match a specific controller.
 
-    *Łukasz Strzałkowski*
+    Deprecate `CONTROLLER` env variable in `bin/rails routes`.
 
-*   Move `respond_with` (and the class-level `respond_to`) to
-    the `responders` gem.
+    See #18902.
 
-    *José Valim*
+    *Anton Davydov* & *Vipul A M*
 
-*   When your templates change, browser caches bust automatically.
+*   Response etags to always be weak: Prefixes 'W/' to value returned by
+   `ActionDispatch::Http::Cache::Response#etag=`, such that etags set in
+   `fresh_when` and `stale?` are weak.
 
-    New default: the template digest is automatically included in your ETags.
-    When you call `fresh_when @post`, the digest for `posts/show.html.erb`
-    is mixed in so future changes to the HTML will blow HTTP caches for you.
-    This makes it easy to HTTP-cache many more of your actions.
+    Fixes #17556.
 
-    If you render a different template, you can now pass the `:template`
-    option to include its digest instead:
+    *Abhishek Yadav*
 
-        fresh_when @post, template: 'widgets/show'
+*   Provide the name of HTTP Status code in assertions.
 
-    Pass `template: false` to skip the lookup. To turn this off entirely, set:
+    *Sean Collins*
 
-        config.action_controller.etag_with_template_digest = false
+*   More explicit error message when running `rake routes`. `CONTROLLER` argument
+    can now be supplied in different ways:
+    `Rails::WelcomeController`, `Rails::Welcome`, `rails/welcome`.
 
-    *Jeremy Kemper*
+    Fixes #22918.
 
-*   Remove deprecated `AbstractController::Helpers::ClassMethods::MissingHelperError`
-    in favor of `AbstractController::Helpers::MissingHelperError`.
+    *Edouard Chin*
 
-    *Yves Senn*
+*   Allow `ActionController::Parameters` instances as an argument to URL
+    helper methods. An `ArgumentError` will be raised if the passed parameters
+    are not secure.
 
-*   Fix `assert_template` not being able to assert that no files were rendered.
+    Fixes #22832.
 
-    *Guo Xiang Tan*
+    *Prathamesh Sonpatki*
 
-*   Extract source code for the entire exception stack trace for
-    better debugging and diagnosis.
+*   Add option for per-form CSRF tokens.
 
-    *Ryan Dao*
+    *Greg Ose & Ben Toews*
 
-*   Allows ActionDispatch::Request::LOCALHOST to match any IPv4 127.0.0.0/8
-    loopback address.
+*   Add tests and documentation for `ActionController::Renderers::use_renderers`.
 
-    *Earl St Sauver*, *Sven Riedel*
+    *Benjamin Fleischer*
 
-*   Preserve original path in `ShowExceptions` middleware by stashing it as
-    `env["action_dispatch.original_path"]`
+*   Fix `ActionController::Parameters#convert_parameters_to_hashes` to return filtered
+    or unfiltered values based on from where it is called, `to_h` or `to_unsafe_h`
+    respectively.
 
-    `ActionDispatch::ShowExceptions` overwrites `PATH_INFO` with the status code
-    for the exception defined in `ExceptionWrapper`, so the path
-    the user was visiting when an exception occurred was not previously
-    available to any custom exceptions_app. The original `PATH_INFO` is now
-    stashed in `env["action_dispatch.original_path"]`.
+    Fixes #22841.
+
+    *Prathamesh Sonpatki*
+
+*   Add `ActionController::Parameters#include?`
+
+    *Justin Coyne*
+
+## Rails 5.0.0.beta1 (December 18, 2015) ##
+
+*   Deprecate `redirect_to :back` in favor of `redirect_back`, which accepts a
+    required `fallback_location` argument, thus eliminating the possibility of a
+    `RedirectBackError`.
+
+    *Derek Prior*
+
+*   Add `redirect_back` method to `ActionController::Redirecting` to provide a
+    way to safely redirect to the `HTTP_REFERER` if it is present, falling back
+    to a provided redirect otherwise.
+
+    *Derek Prior*
+
+*   `ActionController::TestCase` will be moved to it's own gem in Rails 5.1
+
+    With the speed improvements made to `ActionDispatch::IntegrationTest` we no
+    longer need to keep two separate code bases for testing controllers. In
+    Rails 5.1 `ActionController::TestCase` will be deprecated and moved into a
+    gem outside of Rails source.
+
+    This is a documentation deprecation so that going forward so new tests will use
+    `ActionDispatch::IntegrationTest` instead of `ActionController::TestCase`.
+
+    *Eileen M. Uchitelle*
+
+*   Add a `response_format` option to `ActionDispatch::DebugExceptions`
+    to configure the format of the response when errors occur in
+    development mode.
+
+    If `response_format` is `:default` the debug info will be rendered
+    in an HTML page. In the other hand, if the provided value is `:api`
+    the debug info will be rendered in the original response format.
+
+    *Jorge Bejar*
+
+*   Change the `protect_from_forgery` prepend default to `false`.
+
+    Per this comment
+    https://github.com/rails/rails/pull/18334#issuecomment-69234050 we want
+    `protect_from_forgery` to default to `prepend: false`.
+
+    `protect_from_forgery` will now be inserted into the callback chain at the
+    point it is called in your application. This is useful for cases where you
+    want to `protect_from_forgery` after you perform required authentication
+    callbacks or other callbacks that are required to run after forgery protection.
+
+    If you want `protect_from_forgery` callbacks to always run first, regardless of
+    position they are called in your application then you can add `prepend: true`
+    to your `protect_from_forgery` call.
+
+    Example:
+
+    ```ruby
+    protect_from_forgery prepend: true
+    ```
+
+    *Eileen M. Uchitelle*
+
+*   In url_for, never append a question mark to the URL when the query string
+    is empty anyway.  (It used to do that when called like `url_for(controller:
+    'x', action: 'y', q: {})`.)
+
+    *Paul Grayson*
+
+*   Catch invalid UTF-8 querystring values and respond with BadRequest
+
+    Check querystring params for invalid UTF-8 characters, and raise an
+    ActionController::BadRequest error if present. Previously these strings
+    would typically trigger errors further down the stack.
 
     *Grey Baker*
 
-*   Use `String#bytesize` instead of `String#size` when checking for cookie
-    overflow.
+*   Parse RSS/ATOM responses as XML, not HTML.
+
+    *Alexander Kaupanin*
+
+*   Show helpful message in `BadRequest` exceptions due to invalid path
+    parameter encodings.
+
+    Fixes #21923.
 
     *Agis Anastasopoulos*
 
-*   `render nothing: true` or rendering a `nil` body no longer add a single
-    space to the response body.
+*   Add the ability of returning arbitrary headers to `ActionDispatch::Static`.
 
-    The old behavior was added as a workaround for a bug in an early version of
-    Safari, where the HTTP headers are not returned correctly if the response
-    body has a 0-length. This is been fixed since and the workaround is no
-    longer necessary.
+    Now ActionDispatch::Static can accept HTTP headers so that developers
+    will have control of returning arbitrary headers like
+    'Access-Control-Allow-Origin' when a response is delivered. They can be
+    configured with `#config`:
 
-    Use `render body: ' '` if the old behavior is desired.
+    Example:
 
-    See #14883 for details.
+        config.public_file_server.headers = {
+          "Cache-Control"               => "public, max-age=60",
+          "Access-Control-Allow-Origin" => "http://rubyonrails.org"
+        }
 
-    *Godfrey Chan*
+    *Yuki Nishijima*
 
-*   Prepend a JS comment to JSONP callbacks. Addresses CVE-2014-4671
-    ("Rosetta Flash").
+*   Allow multiple `root` routes in same scope level. Example:
 
-    *Greg Campbell*
+    Example:
 
-*   Because URI paths may contain non US-ASCII characters we need to force
-    the encoding of any unescaped URIs to UTF-8 if they are US-ASCII.
-    This essentially replicates the functionality of the monkey patch to
-    URI.parser.unescape in active_support/core_ext/uri.rb.
+        root 'blog#show', constraints: ->(req) { Hostname.blog_site?(req.host) }
+        root 'landing#show'
 
-    Fixes #16104.
+    *Rafael Sales*
 
-    *Karl Entwistle*
+*   Fix regression in mounted engine named routes generation for app deployed to
+    a subdirectory. `relative_url_root` was prepended to the path twice (e.g.
+    "/subdir/subdir/engine_path" instead of "/subdir/engine_path")
 
-*   Generate shallow paths for all children of shallow resources.
+    Fixes #20920. Fixes #21459.
 
-    Fixes #15783.
+    *Matthew Erhard*
 
-    *Seb Jacobs*
+*   `ActionDispatch::Response#new` no longer applies default headers. If you want
+    default headers applied to the response object, then call
+    `ActionDispatch::Response.create`. This change only impacts people who are
+    directly constructing an `ActionDispatch::Response` object.
 
-*   JSONP responses are now rendered with the `text/javascript` content type
-    when rendering through a `respond_to` block.
+*   Accessing mime types via constants like `Mime::HTML` is deprecated. Please
+    change code like this:
 
-    Fixes #15081.
+        Mime::HTML
 
-    *Lucas Mazza*
+    To this:
 
-*   Add `config.action_controller.always_permitted_parameters` to configure which
-    parameters are permitted globally. The default value of this configuration is
-    `['controller', 'action']`.
+        Mime[:html]
 
-    *Gary S. Weaver*, *Rafael Chacon*
+    This change is so that Rails will not manage a list of constants, and fixes
+    an issue where if a type isn't registered you could possibly get the wrong
+    object.
 
-*   Fix env['PATH_INFO'] missing leading slash when a rack app mounted at '/'.
+    `Mime[:html]` is available in older versions of Rails, too, so you can
+    safely change libraries and plugins and maintain compatibility with
+    multiple versions of Rails.
 
-    Fixes #15511.
+*   `url_for` does not modify its arguments when generating polymorphic URLs.
 
-    *Larry Lv*
+    *Bernerd Schaefer*
 
-*   ActionController::Parameters#require now accepts `false` values.
+*   Make it easier to opt in to `config.force_ssl` and `config.ssl_options` by
+    making them less dangerous to try and easier to disable.
 
-    Fixes #15685.
+    SSL redirect:
+      * Move `:host` and `:port` options within `redirect: { … }`. Deprecate.
+      * Introduce `:status` and `:body` to customize the redirect response.
+        The 301 permanent default makes it difficult to test the redirect and
+        back out of it since browsers remember the 301. Test with a 302 or 307
+        instead, then switch to 301 once you're confident that all is well.
 
-    *Sergio Romano*
+    HTTP Strict Transport Security (HSTS):
+      * Shorter max-age. Shorten the default max-age from 1 year to 180 days,
+        the low end for https://www.ssllabs.com/ssltest/ grading and greater
+        than the 18-week minimum to qualify for browser preload lists.
+      * Disabling HSTS. Setting `hsts: false` now sets `hsts { expires: 0 }`
+        instead of omitting the header. Omitting does nothing to disable HSTS
+        since browsers hang on to your previous settings until they expire.
+        Sending `{ hsts: { expires: 0 }}` flushes out old browser settings and
+        actually disables HSTS:
+          http://tools.ietf.org/html/rfc6797#section-6.1.1
+      * HSTS Preload. Introduce `preload: true` to set the `preload` flag,
+        indicating that your site may be included in browser preload lists,
+        including Chrome, Firefox, Safari, IE11, and Edge. Submit your site:
+          https://hstspreload.appspot.com
 
-*   With authorization header `Authorization: Token token=`, `authenticate` now
-    recognize token as nil, instead of "token".
+    *Jeremy Daer*
 
-    Fixes #14846.
+*   Update `ActionController::TestSession#fetch` to behave more like
+    `ActionDispatch::Request::Session#fetch` when using non-string keys.
 
-    *Larry Lv*
+    *Jeremy Friesen*
 
-*   Ensure the controller is always notified as soon as the client disconnects
-    during live streaming, even when the controller is blocked on a write.
+*   Using strings or symbols for middleware class names is deprecated. Convert
+    things like this:
 
-    *Nicholas Jakobsen*, *Matthew Draper*
+      middleware.use "Foo::Bar"
 
-*   Routes specifying 'to:' must be a string that contains a "#" or a rack
-    application.  Use of a symbol should be replaced with `action: symbol`.
-    Use of a string without a "#" should be replaced with `controller: string`.
+    to this:
 
-    *Aaron Patterson*
+      middleware.use Foo::Bar
 
-*   Fix URL generation with `:trailing_slash` such that it does not add
-    a trailing slash after `.:format`
+*   `ActionController::TestSession` now accepts a default value as well as
+    a block for generating a default value based off the key provided.
 
-    *Dan Langevin*
+    This fixes calls to `session#fetch` in `ApplicationController` instances that
+    take more two arguments or a block from raising `ArgumentError: wrong
+    number of arguments (2 for 1)` when performing controller tests.
 
-*   Build full URI as string when processing path in integration tests for
-    performance reasons.
+    *Matthew Gerrior*
+
+*   Fix `ActionController::Parameters#fetch` overwriting `KeyError` returned by
+    default block.
+
+    *Jonas Schuber Erlandsson*, *Roque Pinel*
+
+*   `ActionController::Parameters` no longer inherits from
+    `HashWithIndifferentAccess`
+
+    Inheriting from `HashWithIndifferentAccess` allowed users to call any
+    enumerable methods on `Parameters` object, resulting in a risk of losing the
+    `permitted?` status or even getting back a pure `Hash` object instead of
+    a `Parameters` object with proper sanitization.
+
+    By not inheriting from `HashWithIndifferentAccess`, we are able to make
+    sure that all methods that are defined in `Parameters` object will return
+    a proper `Parameters` object with a correct `permitted?` flag.
+
+    *Prem Sichanugrist*
+
+*   Replaced `ActiveSupport::Concurrency::Latch` with `Concurrent::CountDownLatch`
+    from the concurrent-ruby gem.
+
+    *Jerry D'Antonio*
+
+*   Add ability to filter parameters based on parent keys.
+
+        # matches {credit_card: {code: "xxxx"}}
+        # doesn't match {file: { code: "xxxx"}}
+        config.filter_parameters += [ "credit_card.code" ]
+
+    See #13897.
+
+    *Guillaume Malette*
+
+*   Deprecate passing first parameter as `Hash` and default status code for `head` method.
+
+    *Mehmet Emin İNAÇ*
+
+*   Adds`Rack::Utils::ParameterTypeError` and `Rack::Utils::InvalidParameterError`
+    to the rescue_responses hash in `ExceptionWrapper` (Rack recommends
+    integrators serve 400s for both of these).
+
+    *Grey Baker*
+
+*   Add support for API only apps.
+    `ActionController::API` is added as a replacement of
+    `ActionController::Base` for this kind of applications.
+
+    *Santiago Pastorino*, *Jorge Bejar*
+
+*   Remove `assigns` and `assert_template`. Both methods have been extracted
+    into a gem at https://github.com/rails/rails-controller-testing.
+
+    See #18950.
+
+    *Alan Guo Xiang Tan*
+
+*   `FileHandler` and `Static` middleware initializers accept `index` argument
+    to configure the directory index file name. Defaults to `index` (as in
+    `index.html`).
+
+    See #20017.
+
+    *Eliot Sykes*
+
+*   Deprecate `:nothing` option for `render` method.
+
+    *Mehmet Emin İNAÇ*
+
+*   Fix `rake routes` not showing the right format when
+    nesting multiple routes.
+
+    See #18373.
+
+    *Ravil Bayramgalin*
+
+*   Add ability to override default form builder for a controller.
+
+        class AdminController < ApplicationController
+          default_form_builder AdminFormBuilder
+        end
+
+    *Kevin McPhillips*
+
+*   For actions with no corresponding templates, render `head :no_content`
+    instead of raising an error. This allows for slimmer API controller
+    methods that simply work, without needing further instructions.
+
+    See #19036.
+
+    *Stephen Bussey*
+
+*   Provide friendlier access to request variants.
+
+        request.variant = :phone
+        request.variant.phone?  # true
+        request.variant.tablet? # false
+
+        request.variant = [:phone, :tablet]
+        request.variant.phone?                  # true
+        request.variant.desktop?                # false
+        request.variant.any?(:phone, :desktop)  # true
+        request.variant.any?(:desktop, :watch)  # false
+
+    *George Claghorn*
+
+*   Fix regression where a gzip file response would have a Content-type,
+    even when it was a 304 status code.
+
+    See #19271.
+
+    *Kohei Suzuki*
+
+*   Fix handling of empty `X_FORWARDED_HOST` header in `raw_host_with_port`.
+
+    Previously, an empty `X_FORWARDED_HOST` header would cause
+    `Actiondispatch::Http:URL.raw_host_with_port` to return `nil`, causing
+    `Actiondispatch::Http:URL.host` to raise a `NoMethodError`.
+
+    *Adam Forsyth*
+
+*   Allow `Bearer` as token-keyword in `Authorization-Header`.
+
+    Additionally to `Token`, the keyword `Bearer` is acceptable as a keyword
+    for the auth-token. The `Bearer` keyword is described in the original
+    OAuth RFC and used in libraries like Angular-JWT.
+
+    See #19094.
+
+    *Peter Schröder*
+
+*   Drop request class from `RouteSet` constructor.
+
+    If you would like to use a custom request class, please subclass and implement
+    the `request_class` method.
+
+    *tenderlove@ruby-lang.org*
+
+*   Fallback to `ENV['RAILS_RELATIVE_URL_ROOT']` in `url_for`.
+
+    Fixed an issue where the `RAILS_RELATIVE_URL_ROOT` environment variable is not
+    prepended to the path when `url_for` is called. If `SCRIPT_NAME` (used by Rack)
+    is set, it takes precedence.
+
+    Fixes #5122.
+
+    *Yasyf Mohamedali*
+
+*   Partitioning of routes is now done when the routes are being drawn. This
+    helps to decrease the time spent filtering the routes during the first request.
 
     *Guo Xiang Tan*
 
-*   Fix `'Stack level too deep'` when rendering `head :ok` in an action method
-    called 'status' in a controller.
+*   Fix regression in functional tests. Responses should have default headers
+    assigned.
 
-    Fixes #13905.
+    See #18423.
 
-    *Christiaan Van den Poel*
+    *Jeremy Kemper*, *Yves Senn*
 
-*   Add MKCALENDAR HTTP method (RFC 4791).
+*   Deprecate `AbstractController#skip_action_callback` in favor of individual skip_callback methods
+    (which can be made to raise an error if no callback was removed).
 
-    *Sergey Karpesh*
+    *Iain Beeston*
 
-*   Instrument fragment cache metrics.
+*   Alias the `ActionDispatch::Request#uuid` method to `ActionDispatch::Request#request_id`.
+    Due to implementation, `config.log_tags = [:request_id]` also works in substitute
+    for `config.log_tags = [:uuid]`.
 
-    Adds `:controller`: and `:action` keys to the instrumentation payload
-    for the `*_fragment.action_controller` notifications. This allows tracking
-    e.g. the fragment cache hit rates for each controller action.
+    *David Ilizarov*
 
-    *Daniel Schierbeck*
+*   Change filter on /rails/info/routes to use an actual path regexp from rails
+    and not approximate javascript version. Oniguruma supports much more
+    extensive list of features than javascript regexp engine.
 
-*   Always use the provided port if the protocol is relative.
+    Fixes #18402.
 
-    Fixes #15043.
+    *Ravil Bayramgalin*
 
-    *Guilherme Cavalcanti*, *Andrew White*
+*   Non-string authenticity tokens do not raise NoMethodError when decoding
+    the masked token.
 
-*   Moved `params[request_forgery_protection_token]` into its own method
-    and improved tests.
+    *Ville Lautanala*
 
-    Fixes #11316.
+*   Add `http_cache_forever` to Action Controller, so we can cache a response
+    that never gets expired.
 
-    *Tom Kadwill*
+    *arthurnn*
 
-*   Added verification of route constraints given as a Proc or an object responding
-    to `:matches?`. Previously, when given an non-complying object, it would just
-    silently fail to enforce the constraint. It will now raise an `ArgumentError`
-    when setting up the routes.
+*   `ActionController#translate` supports symbols as shortcuts.
+    When a shortcut is given it also performs the lookup without the action
+    name.
 
-    *Xavier Defrang*
+    *Max Melentiev*
 
-*   Properly treat the entire IPv6 User Local Address space as private for
-    purposes of remote IP detection. Also handle uppercase private IPv6
-    addresses.
+*   Expand `ActionController::ConditionalGet#fresh_when` and `stale?` to also
+    accept a collection of records as the first argument, so that the
+    following code can be written in a shorter form.
 
-    Fixes #12638.
+        # Before
+        def index
+          @articles = Article.all
+          fresh_when(etag: @articles, last_modified: @articles.maximum(:updated_at))
+        end
 
-    *Caleb Spare*
+        # After
+        def index
+          @articles = Article.all
+          fresh_when(@articles)
+        end
 
-*   Fixed an issue with migrating legacy json cookies.
+    *claudiob*
 
-    Previously, the `VerifyAndUpgradeLegacySignedMessage` assumes all incoming
-    cookies are marshal-encoded. This is not the case when `secret_token` is
-    used in conjunction with the `:json` or `:hybrid` serializer.
+*   Explicitly ignored wildcard verbs when searching for HEAD routes before fallback
 
-    In those case, when upgrading to use `secret_key_base`, this would cause a
-    `TypeError: incompatible marshal file format` and a 500 error for the user.
+    Fixes an issue where a mounted rack app at root would intercept the HEAD
+    request causing an incorrect behavior during the fall back to GET requests.
 
-    Fixes #14774.
+    Example:
 
-    *Godfrey Chan*
+        draw do
+            get '/home' => 'test#index'
+            mount rack_app, at: '/'
+        end
+        head '/home'
+        assert_response :success
 
-*   Make URL escaping more consistent:
+    In this case, a HEAD request runs through the routes the first time and fails
+    to match anything. Then, it runs through the list with the fallback and matches
+    `get '/home'`. The original behavior would match the rack app in the first pass.
 
-    1. Escape '%' characters in URLs - only unescaped data should be passed to URL helpers
-    2. Add an `escape_segment` helper to `Router::Utils` that escapes '/' characters
-    3. Use `escape_segment` rather than `escape_fragment` in optimized URL generation
-    4. Use `escape_segment` rather than `escape_path` in URL generation
+    *Terence Sun*
 
-    For point 4 there are two exceptions. Firstly, when a route uses wildcard segments
-    (e.g. `*foo`) then we use `escape_path` as the value may contain '/' characters. This
-    means that wildcard routes can't be optimized. Secondly, if a `:controller` segment
-    is used in the path then this uses `escape_path` as the controller may be namespaced.
+*   Migrating xhr methods to keyword arguments syntax
+    in `ActionController::TestCase` and `ActionDispatch::Integration`
 
-    Fixes #14629, #14636 and #14070.
+    Old syntax:
 
-    *Andrew White*, *Edho Arief*
+        xhr :get, :create, params: { id: 1 }
 
-*   Add alias `ActionDispatch::Http::UploadedFile#to_io` to
-    `ActionDispatch::Http::UploadedFile#tempfile`.
+    New syntax example:
 
-    *Tim Linquist*
+        get :create, params: { id: 1 }, xhr: true
 
-*   Returns null type format when format is not know and controller is using `any`
-    format block.
+    *Kir Shatrov*
 
-    Fixes #14462.
+*   Migrating to keyword arguments syntax in `ActionController::TestCase` and
+    `ActionDispatch::Integration` HTTP request methods.
+
+    Example:
+
+        post :create, params: { y: x }, session: { a: 'b' }
+        get :view, params: { id: 1 }
+        get :view, params: { id: 1 }, format: :json
+
+    *Kir Shatrov*
+
+*   Preserve default url options when generating URLs.
+
+    Fixes an issue that would cause `default_url_options` to be lost when
+    generating URLs with fewer positional arguments than parameters in the
+    route definition.
+
+    *Tekin Suleyman*
+
+*   Deprecate `*_via_redirect` integration test methods.
+
+    Use `follow_redirect!` manually after the request call for the same behavior.
+
+    *Aditya Kapoor*
+
+*   Add `ActionController::Renderer` to render arbitrary templates
+    outside controller actions.
+
+    Its functionality is accessible through class methods `render` and
+    `renderer` of `ActionController::Base`.
+
+    *Ravil Bayramgalin*
+
+*   Support `:assigns` option when rendering with controllers/mailers.
+
+    *Ravil Bayramgalin*
+
+*   Default headers, removed in controller actions, are no longer reapplied on
+    the test response.
+
+    *Jonas Baumann*
+
+*   Deprecate all `*_filter` callbacks in favor of `*_action` callbacks.
 
     *Rafael Mendonça França*
 
-*   Improve routing error page with fuzzy matching search.
+*   Allow you to pass `prepend: false` to `protect_from_forgery` to have the
+    verification callback appended instead of prepended to the chain.
+    This allows you to let the verification step depend on prior callbacks.
 
-    *Winston*
+    Example:
 
-*   Only make deeply nested routes shallow when parent is shallow.
+        class ApplicationController < ActionController::Base
+          before_action :authenticate
+          protect_from_forgery prepend: false, unless: -> { @authenticated_by.oauth? }
 
-    Fixes #14684.
+          private
+            def authenticate
+              if oauth_request?
+                # authenticate with oauth
+                @authenticated_by = 'oauth'.inquiry
+              else
+                # authenticate with cookies
+                @authenticated_by = 'cookie'.inquiry
+              end
+            end
+        end
 
-    *Andrew White*, *James Coglan*
+    *Josef Šimánek*
 
-*   Append link to bad code to backtrace when exception is `SyntaxError`.
+*   Remove `ActionController::HideActions`.
 
-    *Boris Kuznetsov*
+    *Ravil Bayramgalin*
 
-*   Swapped the parameters of assert_equal in `assert_select` so that the
-    proper values were printed correctly.
+*   Remove `respond_to`/`respond_with` placeholder methods, this functionality
+    has been extracted to the `responders` gem.
 
-    Fixes #14422.
+    *Carlos Antonio da Silva*
 
-    *Vishal Lal*
+*   Remove deprecated assertion files.
 
-*   The method `shallow?` returns false if the parent resource is a singleton so
-    we need to check if we're not inside a nested scope before copying the :path
-    and :as options to their shallow equivalents.
+    *Rafael Mendonça França*
 
-    Fixes #14388.
+*   Remove deprecated usage of string keys in URL helpers.
 
-    *Andrew White*
+    *Rafael Mendonça França*
 
-*   Make logging of CSRF failures optional (but on by default) with the
-    `log_warning_on_csrf_failure` configuration setting in
-    `ActionController::RequestForgeryProtection`.
+*   Remove deprecated `only_path` option on `*_path` helpers.
 
-    *John Barton*
+    *Rafael Mendonça França*
 
-*   Fix URL generation in controller tests with request-dependent
-    `default_url_options` methods.
+*   Remove deprecated `NamedRouteCollection#helpers`.
 
-    *Tony Wooster*
+    *Rafael Mendonça França*
 
-Please check [4-1-stable](https://github.com/rails/rails/blob/4-1-stable/actionpack/CHANGELOG.md) for previous changes.
+*   Remove deprecated support to define routes with `:to` option that doesn't contain `#`.
+
+    *Rafael Mendonça França*
+
+*   Remove deprecated `ActionDispatch::Response#to_ary`.
+
+    *Rafael Mendonça França*
+
+*   Remove deprecated `ActionDispatch::Request#deep_munge`.
+
+    *Rafael Mendonça França*
+
+*   Remove deprecated `ActionDispatch::Http::Parameters#symbolized_path_parameters`.
+
+    *Rafael Mendonça França*
+
+*   Remove deprecated option `use_route` in controller tests.
+
+    *Rafael Mendonça França*
+
+*   Ensure `append_info_to_payload` is called even if an exception is raised.
+
+    Fixes an issue where when an exception is raised in the request the additional
+    payload data is not available.
+
+    See #14903.
+
+    *Dieter Komendera*, *Margus Pärt*
+
+*   Correctly rely on the response's status code to handle calls to `head`.
+
+    *Robin Dupret*
+
+*   Using `head` method returns empty response_body instead
+    of returning a single space " ".
+
+    The old behavior was added as a workaround for a bug in an early
+    version of Safari, where the HTTP headers are not returned correctly
+    if the response body has a 0-length. This is been fixed since and
+    the workaround is no longer necessary.
+
+    Fixes #18253.
+
+    *Prathamesh Sonpatki*
+
+*   Fix how polymorphic routes works with objects that implement `to_model`.
+
+    *Travis Grathwell*
+
+*   Stop converting empty arrays in `params` to `nil`.
+
+    This behavior was introduced in response to CVE-2012-2660, CVE-2012-2694
+    and CVE-2013-0155
+
+    ActiveRecord now issues a safe query when passing an empty array into
+    a where clause, so there is no longer a need to defend against this type
+    of input (any nils are still stripped from the array).
+
+    *Chris Sinjakli*
+
+*   Fixed usage of optional scopes in url helpers.
+
+    *Alex Robbin*
+
+*   Fixed handling of positional url helper arguments when `format: false`.
+
+    Fixes #17819.
+
+    *Andrew White*, *Tatiana Soukiassian*
+
+Please check [4-2-stable](https://github.com/rails/rails/blob/4-2-stable/actionpack/CHANGELOG.md) for previous changes.

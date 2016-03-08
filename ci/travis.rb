@@ -16,13 +16,15 @@ end
 class Build
   MAP = {
     'railties' => 'railties',
-    'ap'   => 'actionpack',
-    'am'   => 'actionmailer',
-    'amo'  => 'activemodel',
-    'as'   => 'activesupport',
-    'ar'   => 'activerecord',
-    'av'   => 'actionview',
-    'aj'   => 'activejob'
+    'ap'       => 'actionpack',
+    'am'       => 'actionmailer',
+    'amo'      => 'activemodel',
+    'as'       => 'activesupport',
+    'ar'       => 'activerecord',
+    'av'       => 'actionview',
+    'aj'       => 'activejob',
+    'ac'       => 'actioncable',
+    'guides'   => 'guides'
   }
 
   attr_reader :component, :options
@@ -36,7 +38,11 @@ class Build
     self.options.update(options)
     Dir.chdir(dir) do
       announce(heading)
-      rake(*tasks)
+      if guides?
+        run_bug_report_templates
+      else
+        rake(*tasks)
+      end
     end
   end
 
@@ -48,14 +54,22 @@ class Build
     heading = [gem]
     heading << "with #{adapter}" if activerecord?
     heading << "in isolation" if isolated?
+    heading << "integration" if integration?
     heading.join(' ')
   end
 
   def tasks
     if activerecord?
-      ['db:mysql:rebuild', "#{adapter}:#{'isolated_' if isolated?}test"]
+      tasks = ["#{adapter}:#{'isolated_' if isolated?}test"]
+      case adapter
+      when 'mysql2'
+        tasks.unshift 'db:mysql:rebuild'
+      when 'postgresql'
+        tasks.unshift 'db:postgresql:rebuild'
+      end
+      tasks
     else
-      ["test#{':isolated' if isolated?}"]
+      ["test", ('isolated' if isolated?), ('integration' if integration?)].compact.join(":")
     end
   end
 
@@ -66,12 +80,24 @@ class Build
     key.join(':')
   end
 
+  def activesupport?
+    gem == 'activesupport'
+  end
+
   def activerecord?
     gem == 'activerecord'
   end
 
+  def guides?
+    gem == 'guides'
+  end
+
   def isolated?
     options[:isolated]
+  end
+
+  def integration?
+    component.split(':').last == 'integration'
   end
 
   def gem
@@ -87,37 +113,49 @@ class Build
     tasks.each do |task|
       cmd = "bundle exec rake #{task}"
       puts "Running command: #{cmd}"
-      return false unless system(cmd)
+      return false unless system(env, cmd)
     end
     true
   end
+
+  def env
+    if activesupport? && !isolated?
+      # There is a known issue with the listen tests that casuses files to be
+      # incorrectly GC'ed even when they are still in-use. The current is to
+      # only run them in isolation to avoid randomly failing our test suite.
+      { 'LISTEN' => '0' }
+    else
+      {}
+    end
+  end
+
+  def run_bug_report_templates
+    Dir.glob('bug_report_templates/*.rb').all? do |file|
+      system(Gem.ruby, '-w', file)
+    end
+  end
+end
+
+if ENV['GEM']=='aj:integration'
+   ENV['QC_DATABASE_URL']  = 'postgres://postgres@localhost/active_jobs_qc_int_test'
+   ENV['QUE_DATABASE_URL'] = 'postgres://postgres@localhost/active_jobs_que_int_test'
 end
 
 results = {}
 
 ENV['GEM'].split(',').each do |gem|
   [false, true].each do |isolated|
+    next if ENV['TRAVIS_PULL_REQUEST'] && ENV['TRAVIS_PULL_REQUEST'] != 'false' && isolated
     next if gem == 'railties' && isolated
+    next if gem == 'ac' && isolated
+    next if gem == 'aj:integration' && isolated
+    next if gem == 'guides' && isolated
 
     build = Build.new(gem, :isolated => isolated)
     results[build.key] = build.run!
 
   end
 end
-
-# puts
-# puts "Build environment:"
-# puts "  #{`cat /etc/issue`}"
-# puts "  #{`uname -a`}"
-# puts "  #{`ruby -v`}"
-# puts "  #{`mysql --version`}"
-# puts "  #{`pg_config --version`}"
-# puts "  SQLite3: #{`sqlite3 -version`}"
-# `gem env`.each_line {|line| print "   #{line}"}
-# puts "   Bundled gems:"
-# `bundle show`.each_line {|line| print "     #{line}"}
-# puts "   Local gems:"
-# `gem list`.each_line {|line| print "     #{line}"}
 
 failures = results.select { |key, value| !value  }
 
@@ -128,6 +166,6 @@ if failures.empty?
 else
   puts
   puts "Rails build FAILED"
-  puts "Failed components: #{failures.map { |component| component.first }.join(', ')}"
+  puts "Failed components: #{failures.map(&:first).join(', ')}"
   exit(false)
 end

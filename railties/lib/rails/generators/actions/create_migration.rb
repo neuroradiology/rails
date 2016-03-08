@@ -3,7 +3,7 @@ require 'thor/actions'
 module Rails
   module Generators
     module Actions
-      class CreateMigration < Thor::Actions::CreateFile
+      class CreateMigration < Thor::Actions::CreateFile #:nodoc:
 
         def migration_dir
           File.dirname(@destination)
@@ -39,7 +39,7 @@ module Rails
 
         protected
 
-        def on_conflict_behavior(&block)
+        def on_conflict_behavior
           options = base.options.merge(config)
           if identical?
             say_status :identical, :blue, relative_existing_migration
@@ -48,7 +48,7 @@ module Rails
             say_status :create, :green
             unless pretend?
               ::FileUtils.rm_rf(existing_migration)
-              block.call
+              yield
             end
           elsif options[:skip]
             say_status :skip, :yellow

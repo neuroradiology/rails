@@ -3,8 +3,8 @@ require 'active_support/callbacks'
 module ActiveJob
   # = Active Job Callbacks
   #
-  # Active Job provides hooks during the lifecycle of a job. Callbacks allow you to trigger
-  # logic during the lifecycle of a job. Available callbacks:
+  # Active Job provides hooks during the life cycle of a job. Callbacks allow you
+  # to trigger logic during the life cycle of a job. Available callbacks are:
   #
   # * <tt>before_enqueue</tt>
   # * <tt>around_enqueue</tt>
@@ -17,11 +17,18 @@ module ActiveJob
     extend  ActiveSupport::Concern
     include ActiveSupport::Callbacks
 
+    class << self
+      include ActiveSupport::Callbacks
+      define_callbacks :execute
+    end
+
     included do
       define_callbacks :perform
       define_callbacks :enqueue
     end
 
+    # These methods will be included into any Active Job object, adding
+    # callbacks for +perform+ and +enqueue+ methods.
     module ClassMethods
       # Defines a callback that will get called right before the
       # job's perform method is executed.
@@ -36,7 +43,7 @@ module ActiveJob
       #     def perform(video_id)
       #       Video.find(video_id).process
       #     end
-      # end
+      #   end
       #
       def before_perform(*filters, &blk)
         set_callback(:perform, :before, *filters, &blk)
@@ -55,7 +62,7 @@ module ActiveJob
       #     def perform(video_id)
       #       Video.find(video_id).process
       #     end
-      # end
+      #   end
       #
       def after_perform(*filters, &blk)
         set_callback(:perform, :after, *filters, &blk)
@@ -75,7 +82,7 @@ module ActiveJob
       #     def perform(video_id)
       #       Video.find(video_id).process
       #     end
-      # end
+      #   end
       #
       def around_perform(*filters, &blk)
         set_callback(:perform, :around, *filters, &blk)
@@ -94,7 +101,7 @@ module ActiveJob
       #     def perform(video_id)
       #       Video.find(video_id).process
       #     end
-      # end
+      #   end
       #
       def before_enqueue(*filters, &blk)
         set_callback(:enqueue, :before, *filters, &blk)
@@ -113,7 +120,7 @@ module ActiveJob
       #     def perform(video_id)
       #       Video.find(video_id).process
       #     end
-      # end
+      #   end
       #
       def after_enqueue(*filters, &blk)
         set_callback(:enqueue, :after, *filters, &blk)
@@ -134,7 +141,7 @@ module ActiveJob
       #     def perform(video_id)
       #       Video.find(video_id).process
       #     end
-      # end
+      #   end
       #
       def around_enqueue(*filters, &blk)
         set_callback(:enqueue, :around, *filters, &blk)

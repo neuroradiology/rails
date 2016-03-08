@@ -18,11 +18,14 @@ module ActionView
                            itemscope allowfullscreen default inert sortable
                            truespeed typemustmatch).to_set
 
-      BOOLEAN_ATTRIBUTES.merge(BOOLEAN_ATTRIBUTES.map {|attribute| attribute.to_sym })
+      BOOLEAN_ATTRIBUTES.merge(BOOLEAN_ATTRIBUTES.map(&:to_sym))
 
-      PRE_CONTENT_STRINGS = {
-        :textarea => "\n"
-      }
+      TAG_PREFIXES = ['aria', 'data', :aria, :data].to_set
+
+      PRE_CONTENT_STRINGS             = Hash.new { "".freeze }
+      PRE_CONTENT_STRINGS[:textarea]  = "\n"
+      PRE_CONTENT_STRINGS["textarea"] = "\n"
+
 
       # Returns an empty HTML tag of type +name+ which by default is XHTML
       # compliant. Set +open+ to true to create an open tag compatible
@@ -121,7 +124,7 @@ module ActionView
       #   cdata_section("hello]]>world")
       #   # => <![CDATA[hello]]]]><![CDATA[>world]]>
       def cdata_section(content)
-        splitted = content.to_s.gsub(']]>', ']]]]><![CDATA[>')
+        splitted = content.to_s.gsub(/\]\]\>/, ']]]]><![CDATA[>')
         "<![CDATA[#{splitted}]]>".html_safe
       end
 
@@ -141,28 +144,35 @@ module ActionView
         def content_tag_string(name, content, options, escape = true)
           tag_options = tag_options(options, escape) if options
           content     = ERB::Util.unwrapped_html_escape(content) if escape
-          "<#{name}#{tag_options}>#{PRE_CONTENT_STRINGS[name.to_sym]}#{content}</#{name}>".html_safe
+          "<#{name}#{tag_options}>#{PRE_CONTENT_STRINGS[name]}#{content}</#{name}>".html_safe
         end
 
         def tag_options(options, escape = true)
           return if options.blank?
-          attrs = []
+          output = ""
+          sep    = " ".freeze
           options.each_pair do |key, value|
-            if key.to_s == 'data' && value.is_a?(Hash)
+            if TAG_PREFIXES.include?(key) && value.is_a?(Hash)
               value.each_pair do |k, v|
-                attrs << data_tag_option(k, v, escape)
+                next if v.nil?
+                output << sep
+                output << prefix_tag_option(key, k, v, escape)
               end
             elsif BOOLEAN_ATTRIBUTES.include?(key)
-              attrs << boolean_tag_option(key) if value
+              if value
+                output << sep
+                output << boolean_tag_option(key)
+              end
             elsif !value.nil?
-              attrs << tag_option(key, value, escape)
+              output << sep
+              output << tag_option(key, value, escape)
             end
           end
-          " #{attrs.sort! * ' '}" unless attrs.empty?
+          output unless output.empty?
         end
 
-        def data_tag_option(key, value, escape)
-          key   = "data-#{key.to_s.dasherize}"
+        def prefix_tag_option(prefix, key, value, escape)
+          key = "#{prefix}-#{key.to_s.dasherize}"
           unless value.is_a?(String) || value.is_a?(Symbol) || value.is_a?(BigDecimal)
             value = value.to_json
           end
@@ -175,7 +185,7 @@ module ActionView
 
         def tag_option(key, value, escape)
           if value.is_a?(Array)
-            value = escape ? safe_join(value, " ") : value.join(" ")
+            value = escape ? safe_join(value, " ".freeze) : value.join(" ".freeze)
           else
             value = escape ? ERB::Util.unwrapped_html_escape(value) : value
           end

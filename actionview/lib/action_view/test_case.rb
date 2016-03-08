@@ -24,11 +24,11 @@ module ActionView
       def initialize
         super
         self.class.controller_path = ""
-        @request = ActionController::TestRequest.new
-        @response = ActionController::TestResponse.new
+        @request = ActionController::TestRequest.create
+        @response = ActionDispatch::TestResponse.new
 
         @request.env.delete('PATH_INFO')
-        @params = {}
+        @params = ActionController::Parameters.new
       end
     end
 
@@ -125,6 +125,7 @@ module ActionView
         @_rendered_views ||= RenderedViewsCollection.new
       end
 
+      # Need to experiment if this priority is the best one: rendered => output_buffer
       class RenderedViewsCollection
         def initialize
           @rendered_views ||= Hash.new { |hash, key| hash[key] = [] }
@@ -158,8 +159,7 @@ module ActionView
 
       # Need to experiment if this priority is the best one: rendered => output_buffer
       def document_root_element
-        @html_document ||= Nokogiri::HTML::Document.parse(@rendered.blank? ? @output_buffer : @rendered)
-        @html_document.root
+        Nokogiri::HTML::Document.parse(@rendered.blank? ? @output_buffer : @rendered).root
       end
 
       def say_no_to_protect_against_forgery!
@@ -204,7 +204,7 @@ module ActionView
       def view
         @view ||= begin
           view = @controller.view_context
-          view.singleton_class.send :include, _helpers
+          view.singleton_class.include(_helpers)
           view.extend(Locals)
           view.rendered_views = self.rendered_views
           view.output_buffer = self.output_buffer
@@ -263,9 +263,15 @@ module ActionView
       end
 
       def method_missing(selector, *args)
-        if @controller.respond_to?(:_routes) &&
-          ( @controller._routes.named_routes.route_defined?(selector) ||
-            @controller._routes.mounted_helpers.method_defined?(selector) )
+        begin
+          routes = @controller.respond_to?(:_routes) && @controller._routes
+        rescue
+          # Dont call routes, if there is an error on _routes call
+        end
+
+        if routes &&
+           ( routes.named_routes.route_defined?(selector) ||
+             routes.mounted_helpers.method_defined?(selector) )
           @controller.__send__(selector, *args)
         else
           super

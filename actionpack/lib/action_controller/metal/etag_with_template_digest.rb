@@ -7,8 +7,8 @@ module ActionController
   #
   #   config.action_controller.etag_with_template_digest = false
   #
-  # Override the template to digest by passing `:template` to `fresh_when`
-  # and `stale?` calls. For example:
+  # Override the template to digest by passing +:template+ to +fresh_when+
+  # and +stale?+ calls. For example:
   #
   #   # We're going to render widgets/show, not posts/show
   #   fresh_when @post, template: 'widgets/show'
@@ -25,7 +25,7 @@ module ActionController
       class_attribute :etag_with_template_digest
       self.etag_with_template_digest = true
 
-      ActiveSupport.on_load :action_view, yield: true do |action_view_base|
+      ActiveSupport.on_load :action_view, yield: true do
         etag do |options|
           determine_template_etag(options) if etag_with_template_digest
         end

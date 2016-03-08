@@ -3,7 +3,7 @@ require "active_support/core_ext/class"
 require "active_support/core_ext/module/attribute_accessors"
 require "action_view/template"
 require "thread"
-require "thread_safe"
+require "concurrent/map"
 
 module ActionView
   # = Action View Resolver
@@ -35,7 +35,7 @@ module ActionView
 
     # Threadsafe template cache
     class Cache #:nodoc:
-      class SmallCache < ThreadSafe::Cache
+      class SmallCache < Concurrent::Map
         def initialize(options = {})
           super(options.merge(:initial_capacity => 2))
         end
@@ -52,6 +52,7 @@ module ActionView
 
       def initialize
         @data = SmallCache.new(&KEY_BLOCK)
+        @query_cache = SmallCache.new
       end
 
       # Cache the templates returned by the block
@@ -70,8 +71,17 @@ module ActionView
         end
       end
 
+      def cache_query(query) # :nodoc:
+        if Resolver.caching?
+          @query_cache[query] ||= canonical_no_templates(yield)
+        else
+          yield
+        end
+      end
+
       def clear
         @data.clear
+        @query_cache.clear
       end
 
       private
@@ -116,6 +126,16 @@ module ActionView
       end
     end
 
+    def find_all_anywhere(name, prefix, partial=false, details={}, key=nil, locals=[])
+      cached(key, [name, prefix, partial], details, locals) do
+        find_templates(name, prefix, partial, details, true)
+      end
+    end
+
+    def find_all_with_query(query) # :nodoc:
+      @cache.cache_query(query) { find_template_paths(File.join(@path, query)) }
+    end
+
   private
 
     delegate :caching?, to: :class
@@ -138,7 +158,7 @@ module ActionView
     # resolver is fresher before returning it.
     def cached(key, path_info, details, locals) #:nodoc:
       name, prefix, partial = path_info
-      locals = locals.map { |x| x.to_s }.sort!
+      locals = locals.map(&:to_s).sort!
 
       if key
         @cache.cache(key, name, prefix, partial, locals) do
@@ -173,17 +193,18 @@ module ActionView
 
     private
 
-    def find_templates(name, prefix, partial, details)
+    def find_templates(name, prefix, partial, details, outside_app_allowed = false)
       path = Path.build(name, prefix, partial)
-      query(path, details, details[:formats])
+      query(path, details, details[:formats], outside_app_allowed)
     end
 
-    def query(path, details, formats)
+    def query(path, details, formats, outside_app_allowed)
       query = build_query(path, details)
 
-      template_paths = find_template_paths query
+      template_paths = find_template_paths(query)
+      template_paths = reject_files_external_to_app(template_paths) unless outside_app_allowed
 
-      template_paths.map { |template|
+      template_paths.map do |template|
         handler, format, variant = extract_handler_and_format_and_variant(template, formats)
         contents = File.binread(template)
 
@@ -193,48 +214,50 @@ module ActionView
           :variant      => variant,
           :updated_at   => mtime(template)
         )
-      }
+      end
     end
 
-    if RUBY_VERSION >= '2.2.0'
-      def find_template_paths(query)
-        Dir[query].reject { |filename|
-          File.directory?(filename) ||
-            # deals with case-insensitive file systems.
-            !File.fnmatch(query, filename, File::FNM_EXTGLOB)
-        }
-      end
-    else
-      def find_template_paths(query)
-        # deals with case-insensitive file systems.
-        sanitizer = Hash.new { |h,dir| h[dir] = Dir["#{dir}/*"] }
+    def reject_files_external_to_app(files)
+      files.reject { |filename| !inside_path?(@path, filename) }
+    end
 
-        Dir[query].reject { |filename|
-          File.directory?(filename) ||
-            !sanitizer[File.dirname(filename)].include?(filename)
-        }
+    def find_template_paths(query)
+      Dir[query].uniq.reject do |filename|
+        File.directory?(filename) ||
+          # deals with case-insensitive file systems.
+          !File.fnmatch(query, filename, File::FNM_EXTGLOB)
       end
+    end
+
+    def inside_path?(path, filename)
+      filename = File.expand_path(filename)
+      path = File.join(path, '')
+      filename.start_with?(path)
     end
 
     # Helper for building query glob string based on resolver's pattern.
     def build_query(path, details)
       query = @pattern.dup
 
-      prefix = path.prefix.empty? ? "" : "#{escape_entry(path.prefix)}\\1"
-      query.gsub!(/\:prefix(\/)?/, prefix)
+      prefix = path.prefix.empty? ? '' : "#{escape_entry(path.prefix)}\\1"
+      query.gsub!(/:prefix(\/)?/, prefix)
 
       partial = escape_entry(path.partial? ? "_#{path.name}" : path.name)
-      query.gsub!(/\:action/, partial)
+      query.gsub!(/:action/, partial)
 
-      details.each do |ext, variants|
-        query.gsub!(/\:#{ext}/, "{#{variants.compact.uniq.join(',')}}")
+      details.each do |ext, candidates|
+        if ext == :variants && candidates == :any
+          query.gsub!(/:#{ext}/, "*")
+        else
+          query.gsub!(/:#{ext}/, "{#{candidates.compact.uniq.join(',')}}")
+        end
       end
 
       File.expand_path(query, @path)
     end
 
     def escape_entry(entry)
-      entry.gsub(/[*?{}\[\]]/, '\\\\\\&')
+      entry.gsub(/[*?{}\[\]]/, '\\\\\\&'.freeze)
     end
 
     # Returns the file mtime from the filesystem.
@@ -246,15 +269,10 @@ module ActionView
     # from the path, or the handler, we should return the array of formats given
     # to the resolver.
     def extract_handler_and_format_and_variant(path, default_formats)
-      pieces = File.basename(path).split(".")
+      pieces = File.basename(path).split('.'.freeze)
       pieces.shift
 
       extension = pieces.pop
-      unless extension
-        message = "The file #{path} did not specify a template handler. The default is currently ERB, " \
-                  "but will change to RAW in the future."
-        ActiveSupport::Deprecation.warn message
-      end
 
       handler = Template.handler_for_extension(extension)
       format, variant = pieces.last.split(EXTENSIONS[:variants], 2) if pieces.last
@@ -272,13 +290,13 @@ module ActionView
   # Default pattern, loads views the same way as previous versions of rails, eg. when you're
   # looking for `users/new` it will produce query glob: `users/new{.{en},}{.{html,js},}{.{erb,haml},}`
   #
-  #   FileSystemResolver.new("/path/to/views", ":prefix/:action{.:locale,}{.:formats,}{.:handlers,}")
+  #   FileSystemResolver.new("/path/to/views", ":prefix/:action{.:locale,}{.:formats,}{+:variants,}{.:handlers,}")
   #
   # This one allows you to keep files with different formats in separate subdirectories,
   # eg. `users/new.html` will be loaded from `users/html/new.erb` or `users/new.html.erb`,
   # `users/new.js` from `users/js/new.erb` or `users/new.js.erb`, etc.
   #
-  #   FileSystemResolver.new("/path/to/views", ":prefix/{:formats/,}:action{.:locale,}{.:formats,}{.:handlers,}")
+  #   FileSystemResolver.new("/path/to/views", ":prefix/{:formats/,}:action{.:locale,}{.:formats,}{+:variants,}{.:handlers,}")
   #
   # If you don't specify a pattern then the default will be used.
   #
@@ -287,7 +305,7 @@ module ActionView
   #
   #   ActionController::Base.view_paths = FileSystemResolver.new(
   #     Rails.root.join("app/views"),
-  #     ":prefix{/:locale}/:action{.:formats,}{.:handlers,}"
+  #     ":prefix/:action{.:locale,}{.:formats,}{+:variants,}{.:handlers,}",
   #   )
   #
   # ==== Pattern format and variables
@@ -299,6 +317,7 @@ module ActionView
   # * <tt>:action</tt> - name of the action
   # * <tt>:locale</tt> - possible locale versions
   # * <tt>:formats</tt> - possible request formats (for example html, json, xml...)
+  # * <tt>:variants</tt> - possible request variants (for example phone, tablet...)
   # * <tt>:handlers</tt> - possible handlers (for example erb, haml, builder...)
   #
   class FileSystemResolver < PathResolver
@@ -325,7 +344,11 @@ module ActionView
       query = escape_entry(File.join(@path, path))
 
       exts = EXTENSIONS.map do |ext, prefix|
-        "{#{details[ext].compact.uniq.map { |e| "#{prefix}#{e}," }.join}}"
+        if ext == :variants && details[ext] == :any
+          "{#{prefix}*,}"
+        else
+          "{#{details[ext].compact.uniq.map { |e| "#{prefix}#{e}," }.join}}"
+        end
       end.join
 
       query + exts
