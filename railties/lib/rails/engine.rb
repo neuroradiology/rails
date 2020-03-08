@@ -1,8 +1,11 @@
-require 'rails/railtie'
-require 'rails/engine/railties'
-require 'active_support/core_ext/module/delegation'
-require 'pathname'
-require 'thread'
+# frozen_string_literal: true
+
+require "rails/railtie"
+require "rails/engine/railties"
+require "active_support/core_ext/module/delegation"
+require "active_support/core_ext/object/try"
+require "pathname"
+require "thread"
 
 module Rails
   # <tt>Rails::Engine</tt> allows you to wrap a specific Rails application or subset of
@@ -40,7 +43,7 @@ module Rails
   #
   #   class MyEngine < Rails::Engine
   #     # Add a load path for this specific Engine
-  #     config.autoload_paths << File.expand_path("../lib/some/path", __FILE__)
+  #     config.autoload_paths << File.expand_path("lib/some/path", __dir__)
   #
   #     initializer "my_engine.add_middleware" do |app|
   #       app.middleware.use MyEngine::Middleware
@@ -109,7 +112,7 @@ module Rails
   #
   # == Endpoint
   #
-  # An engine can also be a rack application. It can be useful if you have a rack application that
+  # An engine can also be a Rack application. It can be useful if you have a Rack application that
   # you would like to wrap with +Engine+ and provide with some of the +Engine+'s features.
   #
   # To do that, use the +endpoint+ method:
@@ -128,7 +131,7 @@ module Rails
   #
   # == Middleware stack
   #
-  # As an engine can now be a rack endpoint, it can also have a middleware
+  # As an engine can now be a Rack endpoint, it can also have a middleware
   # stack. The usage is exactly the same as in <tt>Application</tt>:
   #
   #   module MyEngine
@@ -219,16 +222,16 @@ module Rails
   # The next thing that changes in isolated engines is the behavior of routes.
   # Normally, when you namespace your controllers, you also need to namespace
   # the related routes. With an isolated engine, the engine's namespace is
-  # automatically applied, so you don't need to specify it explicity in your
+  # automatically applied, so you don't need to specify it explicitly in your
   # routes:
   #
   #   MyEngine::Engine.routes.draw do
   #     resources :articles
   #   end
   #
-  # If +MyEngine+ is isolated, The routes above will point to
+  # If +MyEngine+ is isolated, the routes above will point to
   # <tt>MyEngine::ArticlesController</tt>. You also don't need to use longer
-  # url helpers like +my_engine_articles_path+. Instead, you should simply use
+  # URL helpers like +my_engine_articles_path+. Instead, you should simply use
   # +articles_path+, like you would do with your main application.
   #
   # To make this behavior consistent with other parts of the framework,
@@ -236,7 +239,7 @@ module Rails
   # normal Rails app, when you use a namespaced model such as
   # <tt>Namespace::Article</tt>, <tt>ActiveModel::Naming</tt> will generate
   # names with the prefix "namespace". In an isolated engine, the prefix will
-  # be omitted in url helpers and form fields, for convenience.
+  # be omitted in URL helpers and form fields, for convenience.
   #
   #   polymorphic_url(MyEngine::Article.new)
   #   # => "articles_path" # not "my_engine_articles_path"
@@ -284,11 +287,11 @@ module Rails
   # Note that the <tt>:as</tt> option given to mount takes the <tt>engine_name</tt> as default, so most of the time
   # you can simply omit it.
   #
-  # Finally, if you want to generate a url to an engine's route using
+  # Finally, if you want to generate a URL to an engine's route using
   # <tt>polymorphic_url</tt>, you also need to pass the engine helper. Let's
   # say that you want to create a form pointing to one of the engine's routes.
   # All you need to do is pass the helper as the first element in array with
-  # attributes for url:
+  # attributes for URL:
   #
   #   form_for([my_engine, @user])
   #
@@ -337,7 +340,7 @@ module Rails
   # == Loading priority
   #
   # In order to change engine's priority you can use +config.railties_order+ in the main application.
-  # It will affect the priority of loading views, helpers, assets and all the other files
+  # It will affect the priority of loading views, helpers, assets, and all the other files
   # related to engine or application.
   #
   #   # load Blog::Engine with highest priority, followed by application and other railties
@@ -360,7 +363,7 @@ module Rails
           base.called_from = begin
             call_stack = caller_locations.map { |l| l.absolute_path || l.path }
 
-            File.dirname(call_stack.detect { |p| p !~ %r[railties[\w.-]*/lib/rails|rack[\w.-]*/lib/rack] })
+            File.dirname(call_stack.detect { |p| !p.match?(%r[railties[\w.-]*/lib/rails|rack[\w.-]*/lib/rack]) })
           end
         end
 
@@ -380,7 +383,7 @@ module Rails
       def isolate_namespace(mod)
         engine_name(generate_railtie_name(mod.name))
 
-        self.routes.default_scope = { module: ActiveSupport::Inflector.underscore(mod.name) }
+        routes.default_scope = { module: ActiveSupport::Inflector.underscore(mod.name) }
         self.isolated = true
 
         unless mod.respond_to?(:railtie_namespace)
@@ -402,7 +405,7 @@ module Rails
             end
 
             unless mod.respond_to?(:railtie_routes_url_helpers)
-              define_method(:railtie_routes_url_helpers) {|include_path_helpers = true| railtie.routes.url_helpers(include_path_helpers) }
+              define_method(:railtie_routes_url_helpers) { |include_path_helpers = true| railtie.routes.url_helpers(include_path_helpers) }
             end
           end
         end
@@ -436,7 +439,7 @@ module Rails
 
     # Load console and invoke the registered hooks.
     # Check <tt>Rails::Railtie.console</tt> for more info.
-    def load_console(app=self)
+    def load_console(app = self)
       require "rails/console/app"
       require "rails/console/helpers"
       run_console_blocks(app)
@@ -445,14 +448,14 @@ module Rails
 
     # Load Rails runner and invoke the registered hooks.
     # Check <tt>Rails::Railtie.runner</tt> for more info.
-    def load_runner(app=self)
+    def load_runner(app = self)
       run_runner_blocks(app)
       self
     end
 
     # Load Rake, railties tasks and invoke the registered hooks.
     # Check <tt>Rails::Railtie.rake_tasks</tt> for more info.
-    def load_tasks(app=self)
+    def load_tasks(app = self)
       require "rake"
       run_tasks_blocks(app)
       self
@@ -460,20 +463,23 @@ module Rails
 
     # Load Rails generators and invoke the registered hooks.
     # Check <tt>Rails::Railtie.generators</tt> for more info.
-    def load_generators(app=self)
+    def load_generators(app = self)
       require "rails/generators"
       run_generators_blocks(app)
       Rails::Generators.configure!(app.config.generators)
       self
     end
 
-    # Eager load the application by loading all ruby
-    # files inside eager_load paths.
     def eager_load!
+      # Already done by Zeitwerk::Loader.eager_load_all. We need this guard to
+      # easily provide a compatible API for both zeitwerk and classic modes.
+      return if Rails.autoloaders.zeitwerk_enabled?
+
       config.eager_load_paths.each do |load_path|
-        matcher = /\A#{Regexp.escape(load_path.to_s)}\/(.*)\.rb\Z/
+        # Starts after load_path plus a slash, ends before ".rb".
+        relname_range = (load_path.to_s.length + 1)...-3
         Dir.glob("#{load_path}/**/*.rb").sort.each do |file|
-          require_dependency file.sub(matcher, '\1')
+          require_dependency file[relname_range]
         end
       end
     end
@@ -499,7 +505,7 @@ module Rails
       paths["app/helpers"].existent
     end
 
-    # Returns the underlying rack application for this engine.
+    # Returns the underlying Rack application for this engine.
     def app
       @app || @app_build_lock.synchronize {
         @app ||= begin
@@ -529,9 +535,9 @@ module Rails
 
     # Defines the routes for this engine. If a block is given to
     # routes, it is appended to the engine.
-    def routes
+    def routes(&block)
       @routes ||= ActionDispatch::Routing::RouteSet.new_with_config(config)
-      @routes.append(&Proc.new) if block_given?
+      @routes.append(&block) if block_given?
       @routes
     end
 
@@ -546,12 +552,23 @@ module Rails
     # Blog::Engine.load_seed
     def load_seed
       seed_file = paths["db/seeds.rb"].existent.first
-      load(seed_file) if seed_file
+      return unless seed_file
+
+      if config.try(:active_job)&.queue_adapter == :async
+        with_inline_jobs { load(seed_file) }
+      else
+        load(seed_file)
+      end
     end
 
-    # Add configured load paths to ruby load paths and remove duplicates.
-    initializer :set_load_path, before: :bootstrap_hook do
-      _all_load_paths.reverse_each do |path|
+    initializer :load_environment_config, before: :load_environment_hook, group: :all do
+      paths["config/environments"].existent.each do |environment|
+        require environment
+      end
+    end
+
+    initializer :set_load_path, before: :bootstrap_hook do |app|
+      _all_load_paths(app.config.add_autoload_paths_to_load_path).reverse_each do |path|
         $LOAD_PATH.unshift(path) if File.directory?(path)
       end
       $LOAD_PATH.uniq!
@@ -566,18 +583,24 @@ module Rails
       ActiveSupport::Dependencies.autoload_paths.unshift(*_all_autoload_paths)
       ActiveSupport::Dependencies.autoload_once_paths.unshift(*_all_autoload_once_paths)
 
-      # Freeze so future modifications will fail rather than do nothing mysteriously
       config.autoload_paths.freeze
-      config.eager_load_paths.freeze
       config.autoload_once_paths.freeze
     end
 
+    initializer :set_eager_load_paths, before: :bootstrap_hook do
+      ActiveSupport::Dependencies._eager_load_paths.merge(config.eager_load_paths)
+      config.eager_load_paths.freeze
+    end
+
     initializer :add_routing_paths do |app|
-      routing_paths = self.paths["config/routes.rb"].existent
+      routing_paths = paths["config/routes.rb"].existent
+      external_paths = self.paths["config/routes"].paths
+      routes.draw_paths.concat(external_paths)
 
       if routes? || routing_paths.any?
         app.routes_reloader.paths.unshift(*routing_paths)
         app.routes_reloader.route_sets << routes
+        app.routes_reloader.external_routes.unshift(*external_paths)
       end
     end
 
@@ -590,14 +613,8 @@ module Rails
     initializer :add_view_paths do
       views = paths["app/views"].existent
       unless views.empty?
-        ActiveSupport.on_load(:action_controller){ prepend_view_path(views) if respond_to?(:prepend_view_path) }
-        ActiveSupport.on_load(:action_mailer){ prepend_view_path(views) }
-      end
-    end
-
-    initializer :load_environment_config, before: :load_environment_hook, group: :all do
-      paths["config/environments"].existent.each do |environment|
-        require environment
+        ActiveSupport.on_load(:action_controller) { prepend_view_path(views) if respond_to?(:prepend_view_path) }
+        ActiveSupport.on_load(:action_mailer) { prepend_view_path(views) }
       end
     end
 
@@ -619,7 +636,7 @@ module Rails
     end
 
     rake_tasks do
-      next if self.is_a?(Rails::Application)
+      next if is_a?(Rails::Application)
       next unless has_migrations?
 
       namespace railtie_name do
@@ -642,63 +659,76 @@ module Rails
     end
 
     protected
-
-    def load_config_initializer(initializer)
-      ActiveSupport::Notifications.instrument('load_config_initializer.railties', initializer: initializer) do
-        load(initializer)
+      def run_tasks_blocks(*) #:nodoc:
+        super
+        paths["lib/tasks"].existent.sort.each { |ext| load(ext) }
       end
-    end
-
-    def run_tasks_blocks(*) #:nodoc:
-      super
-      paths["lib/tasks"].existent.sort.each { |ext| load(ext) }
-    end
-
-    def has_migrations? #:nodoc:
-      paths["db/migrate"].existent.any?
-    end
-
-    def self.find_root_with_flag(flag, root_path, default=nil) #:nodoc:
-
-      while root_path && File.directory?(root_path) && !File.exist?("#{root_path}/#{flag}")
-        parent = File.dirname(root_path)
-        root_path = parent != root_path && parent
-      end
-
-      root = File.exist?("#{root_path}/#{flag}") ? root_path : default
-      raise "Could not find root path for #{self}" unless root
-
-      Pathname.new File.realpath root
-    end
-
-    def default_middleware_stack #:nodoc:
-      ActionDispatch::MiddlewareStack.new
-    end
-
-    def _all_autoload_once_paths #:nodoc:
-      config.autoload_once_paths
-    end
-
-    def _all_autoload_paths #:nodoc:
-      @_all_autoload_paths ||= (config.autoload_paths + config.eager_load_paths + config.autoload_once_paths).uniq
-    end
-
-    def _all_load_paths #:nodoc:
-      @_all_load_paths ||= (config.paths.load_paths + _all_autoload_paths).uniq
-    end
 
     private
+      def load_config_initializer(initializer) # :doc:
+        ActiveSupport::Notifications.instrument("load_config_initializer.railties", initializer: initializer) do
+          load(initializer)
+        end
+      end
 
-    def build_request(env)
-      env.merge!(env_config)
-      req = ActionDispatch::Request.new env
-      req.routes = routes
-      req.engine_script_name = req.script_name
-      req
-    end
+      def with_inline_jobs
+        queue_adapter = config.active_job.queue_adapter
+        ActiveSupport.on_load(:active_job) do
+          self.queue_adapter = :inline
+        end
+        yield
+      ensure
+        ActiveSupport.on_load(:active_job) do
+          self.queue_adapter = queue_adapter
+        end
+      end
 
-    def build_middleware
-      config.middleware
-    end
+      def has_migrations?
+        paths["db/migrate"].existent.any?
+      end
+
+      def self.find_root_with_flag(flag, root_path, default = nil) #:nodoc:
+        while root_path && File.directory?(root_path) && !File.exist?("#{root_path}/#{flag}")
+          parent = File.dirname(root_path)
+          root_path = parent != root_path && parent
+        end
+
+        root = File.exist?("#{root_path}/#{flag}") ? root_path : default
+        raise "Could not find root path for #{self}" unless root
+
+        Pathname.new File.realpath root
+      end
+
+      def default_middleware_stack
+        ActionDispatch::MiddlewareStack.new
+      end
+
+      def _all_autoload_once_paths
+        config.autoload_once_paths
+      end
+
+      def _all_autoload_paths
+        @_all_autoload_paths ||= (config.autoload_paths + config.eager_load_paths + config.autoload_once_paths).uniq
+      end
+
+      def _all_load_paths(add_autoload_paths_to_load_path)
+        @_all_load_paths ||= begin
+          load_paths  = config.paths.load_paths
+          load_paths += _all_autoload_paths if add_autoload_paths_to_load_path
+          load_paths.uniq
+        end
+      end
+
+      def build_request(env)
+        env.merge!(env_config)
+        req = ActionDispatch::Request.new env
+        req.routes = routes
+        req.engine_script_name = req.script_name
+        req
+      end
+
+      def build_middleware
+        config.middleware
+      end
   end
 end

@@ -1,4 +1,6 @@
-require 'active_support/callbacks'
+# frozen_string_literal: true
+
+require "active_support/callbacks"
 
 module ActionCable
   module Channel
@@ -11,7 +13,7 @@ module ActionCable
         define_callbacks :unsubscribe
       end
 
-      class_methods do
+      module ClassMethods
         def before_subscribe(*methods, &block)
           set_callback(:subscribe, :before, *methods, &block)
         end

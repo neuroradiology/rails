@@ -1,6 +1,8 @@
-require 'test_helper'
+# frozen_string_literal: true
 
-class WorkerTest < ActiveSupport::TestCase
+require "test_helper"
+
+class WorkerTest < ActionCable::TestCase
   class Receiver
     attr_accessor :last_action
 
@@ -9,7 +11,7 @@ class WorkerTest < ActiveSupport::TestCase
     end
 
     def process(message)
-      @last_action =  [ :process, message ]
+      @last_action = [ :process, message ]
     end
 
     def connection
@@ -33,22 +35,12 @@ class WorkerTest < ActiveSupport::TestCase
   end
 
   test "invoke" do
-    @worker.invoke @receiver, :run
+    @worker.invoke @receiver, :run, connection: @receiver.connection
     assert_equal :run, @receiver.last_action
   end
 
   test "invoke with arguments" do
-    @worker.invoke @receiver, :process, "Hello"
+    @worker.invoke @receiver, :process, "Hello", connection: @receiver.connection
     assert_equal [ :process, "Hello" ], @receiver.last_action
-  end
-
-  test "running periodic timers with a proc" do
-    @worker.run_periodic_timer @receiver, @receiver.method(:run)
-    assert_equal :run, @receiver.last_action
-  end
-
-  test "running periodic timers with a method" do
-    @worker.run_periodic_timer @receiver, :run
-    assert_equal :run, @receiver.last_action
   end
 end

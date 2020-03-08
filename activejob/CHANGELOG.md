@@ -1,160 +1,86 @@
-*   Enable class reloading prior to job dispatch, and ensure Active Record
-    connections are returned to the pool when jobs are run in separate threads.
+*   Add queue name support to Que adapter
 
-    *Matthew Draper*
+    *Brad Nauta*, *Wojciech Wnętrzak*
 
-*   Tune the async adapter for low-footprint dev/test usage. Use a single
-    thread pool for all queues and limit to 0 to #CPU total threads, down from
-    2 to 10*#CPU per queue.
+*   Don't run `after_enqueue` and `after_perform` callbacks if the callback chain is halted.
 
-    *Jeremy Daer*
+        class MyJob < ApplicationJob
+          before_enqueue { throw(:abort) }
+          after_enqueue { # won't enter here anymore }
+        end
 
+    `after_enqueue` and `after_perform` callbacks will no longer run if the callback chain is halted.
+    This behaviour is a breaking change and won't take effect until Rails 6.2.
+    To enable this behaviour in your app right now, you can add in your app's configuration file
+    `config.active_job.skip_after_callbacks_if_terminated = true`
 
-## Rails 5.0.0.beta3 (February 24, 2016) ##
+    *Edouard Chin*
 
-*   Change the default adapter from inline to async. It's a better default as tests will then not mistakenly
-    come to rely on behavior happening synchronously. This is especially important with things like jobs kicked off
-    in Active Record lifecycle callbacks.
+*   Fix enqueuing and performing incorrect logging message.
 
-    *DHH*
+    Jobs will no longer always log "Enqueued MyJob" or "Performed MyJob" when they actually didn't get enqueued/performed.
 
+    ```ruby
+      class MyJob < ApplicationJob
+        before_enqueue { throw(:abort) }
+      end
 
-## Rails 5.0.0.beta2 (February 01, 2016) ##
+      MyJob.perform_later # Will no longer log "Enqueued MyJob" since job wasn't even enqueued through adapter.
+    ```
 
-*   No changes.
+    A new message will be logged in case a job couldn't be enqueued, either because the callback chain was halted or
+    because an exception happened during enqueing. (i.e. Redis is down when you try to enqueue your job)
 
+    *Edouard Chin*
 
-## Rails 5.0.0.beta1 (December 18, 2015) ##
+*   Add an option to disable logging of the job arguments when enqueuing and executing the job.
 
-*   Fixed serializing `:at` option for `assert_enqueued_with`
-    and `assert_performed_with`.
+        class SensitiveJob < ApplicationJob
+          self.log_arguments = false
 
-    *Wojciech Wnętrzak*
-
-*   Support passing array to `assert_enqueued_jobs` in `:only` option.
-
-    *Wojciech Wnętrzak*
-
-*   Add job priorities to Active Job.
-
-    *wvengen*
-
-*   Implement a simple `AsyncJob` processor and associated `AsyncAdapter` that
-    queue jobs to a `concurrent-ruby` thread pool.
-
-    *Jerry D'Antonio*
-
-*   Implement `provider_job_id` for `queue_classic` adapter. This requires the
-    latest, currently unreleased, version of queue_classic.
-
-    *Yves Senn*
-
-*   `assert_enqueued_with` and `assert_performed_with` now returns the matched
-    job instance for further assertions.
-
-    *Jean Boussier*
-
-*   Include `I18n.locale` into job serialization/deserialization and use it around
-    `perform`.
-
-    Fixes #20799.
-
-    *Johannes Opper*
-
-*   Allow `DelayedJob`, `Sidekiq`, `qu`, and `que` to report the job id back to
-    `ActiveJob::Base` as `provider_job_id`.
-
-    Fixes #18821.
-
-    *Kevin Deisz*, *Jeroen van Baarsen*
-
-*   `assert_enqueued_jobs` and `assert_performed_jobs` in block form use the
-    given number as expected value. This makes the error message much easier to
-    understand.
-
-    *y-yagi*
-
-*   A generated job now inherits from `app/jobs/application_job.rb` by default.
-
-    *Jeroen van Baarsen*
-
-*   Add an `:only` option to `perform_enqueued_jobs` to filter jobs based on
-    type.
-
-    This allows specific jobs to be tested, while preventing others from
-    being performed unnecessarily.
-
-    Example:
-
-        def test_hello_job
-          assert_performed_jobs 1, only: HelloJob do
-            HelloJob.perform_later('jeremy')
-            LoggingJob.perform_later
+          def perform(my_sensitive_argument)
           end
         end
 
-    An array may also be specified, to support testing multiple jobs.
+    When dealing with sensitive arguments as password and tokens it is now possible to configure the job
+    to not put the sensitive argument in the logs.
 
-    Example:
+    *Rafael Mendonça França*
 
-        def test_hello_and_logging_jobs
-          assert_nothing_raised do
-            assert_performed_jobs 2, only: [HelloJob, LoggingJob] do
-              HelloJob.perform_later('jeremy')
-              LoggingJob.perform_later('stewie')
-              RescueJob.perform_later('david')
-            end
-          end
-        end
+*   Changes in `queue_name_prefix` of a job no longer affects all other jobs.
 
-    Fixes #18802.
+    Fixes #37084.
 
-    *Michael Ryan*
+    *Lucas Mansur*
 
-*   Allow keyword arguments to be used with Active Job.
+*   Allow `Class` and `Module` instances to be serialized.
 
-    Fixes #18741.
+    *Kevin Deisz*
 
-    *Sean Griffin*
+*   Log potential matches in `assert_enqueued_with` and `assert_performed_with`.
 
-*   Add `:only` option to `assert_enqueued_jobs`, to check the number of times
-    a specific kind of job is enqueued.
+    *Gareth du Plooy*
 
-    Example:
+*   Add `at` argument to the `perform_enqueued_jobs` test helper.
 
-        def test_logging_job
-          assert_enqueued_jobs 1, only: LoggingJob do
-            LoggingJob.perform_later
-            HelloJob.perform_later('jeremy')
-          end
-        end
+    *John Crepezzi*, *Eileen Uchitelle*
 
-    *George Claghorn*
+*   `assert_enqueued_with` and `assert_performed_with` can now test jobs with relative delay.
 
-*   `ActiveJob::Base.deserialize` delegates to the job class.
+    *Vlado Cingel*
 
-    Since `ActiveJob::Base#deserialize` can be overridden by subclasses (like
-    `ActiveJob::Base#serialize`) this allows jobs to attach arbitrary metadata
-    when they get serialized and read it back when they get performed.
+*   Add jitter to :exponentially_longer.
 
-    Example:
+    ActiveJob::Exceptions.retry_on with :exponentially_longer now uses a random amount of jitter in order to
+    prevent the [thundering herd effect](https://en.wikipedia.org/wiki/Thundering_herd_problem). Defaults to
+    15% (represented as 0.15) but overridable via the `:jitter` option when using `retry_on`.
+    Jitter is applied when an `Integer`, `ActiveSupport::Duration` or `:exponentially_longer`, is passed to the `wait` argument in `retry_on`.
 
-        class DeliverWebhookJob < ActiveJob::Base
-          def serialize
-            super.merge('attempt_number' => (@attempt_number || 0) + 1)
-          end
+    ```ruby
+    retry_on(MyError, wait: :exponentially_longer, jitter: 0.30)
+    ```
 
-          def deserialize(job_data)
-            super
-            @attempt_number = job_data['attempt_number']
-          end
+    *Anthony Ross*
 
-          rescue_from(TimeoutError) do |exception|
-            raise exception if @attempt_number > 5
-            retry_job(wait: 10)
-          end
-        end
 
-    *Isaac Seymour*
-
-Please check [4-2-stable](https://github.com/rails/rails/blob/4-2-stable/activejob/CHANGELOG.md) for previous changes.
+Please check [6-0-stable](https://github.com/rails/rails/blob/6-0-stable/activejob/CHANGELOG.md) for previous changes.

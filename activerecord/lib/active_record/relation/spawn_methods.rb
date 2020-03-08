@@ -1,13 +1,14 @@
-require 'active_support/core_ext/hash/except'
-require 'active_support/core_ext/hash/slice'
-require 'active_record/relation/merger'
+# frozen_string_literal: true
+
+require "active_support/core_ext/hash/except"
+require "active_support/core_ext/hash/slice"
+require "active_record/relation/merger"
 
 module ActiveRecord
   module SpawnMethods
-
     # This is overridden by Associations::CollectionProxy
     def spawn #:nodoc:
-      clone
+      already_in_scope? ? klass.all : clone
     end
 
     # Merges in the conditions from <tt>other</tt>, if <tt>other</tt> is an ActiveRecord::Relation.
@@ -66,9 +67,8 @@ module ActiveRecord
     end
 
     private
-
-      def relation_with(values) # :nodoc:
-        result = Relation.create(klass, table, predicate_builder, values)
+      def relation_with(values)
+        result = Relation.create(klass, values: values)
         result.extend(*extending_values) if extending_values.any?
         result
       end

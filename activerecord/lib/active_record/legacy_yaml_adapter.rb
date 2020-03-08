@@ -1,12 +1,14 @@
+# frozen_string_literal: true
+
 module ActiveRecord
   module LegacyYamlAdapter
     def self.convert(klass, coder)
       return coder unless coder.is_a?(Psych::Coder)
 
       case coder["active_record_yaml_version"]
-      when 1 then coder
+      when 1, 2 then coder
       else
-        if coder["attributes"].is_a?(AttributeSet)
+        if coder["attributes"].is_a?(ActiveModel::AttributeSet)
           Rails420.convert(klass, coder)
         else
           Rails41.convert(klass, coder)

@@ -1,10 +1,12 @@
+# frozen_string_literal: true
+
 module ActionDispatch
   module Journey # :nodoc:
     module Path # :nodoc:
       class Pattern # :nodoc:
         attr_reader :spec, :requirements, :anchored
 
-        def self.from_string string
+        def self.from_string(string)
           build(string, {}, "/.?", true)
         end
 
@@ -29,6 +31,13 @@ module ActionDispatch
 
         def build_formatter
           Visitors::FormatBuilder.new.accept(spec)
+        end
+
+        def eager_load!
+          required_names
+          offsets
+          to_regexp
+          nil
         end
 
         def ast
@@ -81,7 +90,7 @@ module ActionDispatch
             return @separator_re unless @matchers.key?(node)
 
             re = @matchers[node]
-            "(#{re})"
+            "(#{Regexp.union(re)})"
           end
 
           def visit_GROUP(node)
@@ -98,7 +107,7 @@ module ActionDispatch
           end
 
           def visit_STAR(node)
-            re = @matchers[node.left.to_sym] || '.+'
+            re = @matchers[node.left.to_sym] || ".+"
             "(#{re})"
           end
 
@@ -110,7 +119,8 @@ module ActionDispatch
 
         class UnanchoredRegexp < AnchoredRegexp # :nodoc:
           def accept(node)
-            %r{\A#{visit node}}
+            path = visit node
+            path == "/" ? %r{\A/} : %r{\A#{path}(?:\b|\Z|/)}
           end
         end
 
@@ -125,6 +135,10 @@ module ActionDispatch
 
           def captures
             Array.new(length - 1) { |i| self[i + 1] }
+          end
+
+          def named_captures
+            @names.zip(captures).to_h
           end
 
           def [](x)
@@ -151,6 +165,10 @@ module ActionDispatch
         end
         alias :=~ :match
 
+        def match?(other)
+          to_regexp.match?(other)
+        end
+
         def source
           to_regexp.source
         end
@@ -159,8 +177,13 @@ module ActionDispatch
           @re ||= regexp_visitor.new(@separators, @requirements).accept spec
         end
 
-        private
+        def requirements_for_missing_keys_check
+          @requirements_for_missing_keys_check ||= requirements.transform_values do |regex|
+            /\A#{regex}\Z/
+          end
+        end
 
+        private
           def regexp_visitor
             @anchored ? AnchoredRegexp : UnanchoredRegexp
           end
@@ -174,8 +197,8 @@ module ActionDispatch
               node = node.to_sym
 
               if @requirements.key?(node)
-                re = /#{@requirements[node]}|/
-                @offsets.push((re.match('').length - 1) + @offsets.last)
+                re = /#{Regexp.union(@requirements[node])}|/
+                @offsets.push((re.match("").length - 1) + @offsets.last)
               else
                 @offsets << @offsets.last
               end

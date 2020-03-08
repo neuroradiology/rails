@@ -1,13 +1,12 @@
-require 'erubis'
-require 'active_support/configurable'
-require 'active_support/descendants_tracker'
-require 'active_support/core_ext/module/anonymous'
-require 'active_support/core_ext/module/attr_internal'
+# frozen_string_literal: true
+
+require "abstract_controller/error"
+require "active_support/configurable"
+require "active_support/descendants_tracker"
+require "active_support/core_ext/module/anonymous"
+require "active_support/core_ext/module/attr_internal"
 
 module AbstractController
-  class Error < StandardError #:nodoc:
-  end
-
   # Raised when a non-existing controller action is triggered.
   class ActionNotFound < StandardError
   end
@@ -17,14 +16,21 @@ module AbstractController
   # expected to provide their own +render+ method, since rendering means
   # different things depending on the context.
   class Base
+    ##
+    # Returns the body of the HTTP response sent by the controller.
     attr_internal :response_body
+
+    ##
+    # Returns the name of the action this controller is processing.
     attr_internal :action_name
+
+    ##
+    # Returns the formats that can be processed by the controller.
     attr_internal :formats
 
     include ActiveSupport::Configurable
     extend ActiveSupport::DescendantsTracker
 
-    undef_method :not_implemented
     class << self
       attr_reader :abstract
       alias_method :abstract?, :abstract
@@ -72,13 +78,15 @@ module AbstractController
             # Except for public instance methods of Base and its ancestors
             internal_methods +
             # Be sure to include shadowed public instance methods of this class
-            public_instance_methods(false)).uniq.map(&:to_s)
+            public_instance_methods(false))
+
+          methods.map!(&:to_s)
 
           methods.to_set
         end
       end
 
-      # action_methods are cached and there is sometimes need to refresh
+      # action_methods are cached and there is sometimes a need to refresh
       # them. ::clear_action_methods! allows you to do that, so next time
       # you run action_methods, they will be recalculated.
       def clear_action_methods!
@@ -96,7 +104,7 @@ module AbstractController
       # ==== Returns
       # * <tt>String</tt>
       def controller_path
-        @controller_path ||= name.sub(/Controller$/, ''.freeze).underscore unless anonymous?
+        @controller_path ||= name.sub(/Controller$/, "").underscore unless anonymous?
       end
 
       # Refresh the cached action_methods when a new action_method is added.
@@ -152,6 +160,13 @@ module AbstractController
       _find_action_name(action_name)
     end
 
+    # Tests if a response body is set. Used to determine if the
+    # +process_action+ callback needs to be terminated in
+    # +AbstractController::Callbacks+.
+    def performed?
+      response_body
+    end
+
     # Returns true if the given controller is capable of rendering
     # a path. A subclass of +AbstractController::Base+
     # may return false. An Email controller for example does not
@@ -161,14 +176,11 @@ module AbstractController
     end
 
     private
-
       # Returns true if the name can be considered an action because
       # it has a method defined in the controller.
       #
       # ==== Parameters
       # * <tt>name</tt> - The name of an action to be tested
-      #
-      # :api: private
       def action_method?(name)
         self.class.action_methods.include?(name)
       end
@@ -210,7 +222,7 @@ module AbstractController
       # ==== Returns
       # * <tt>string</tt> - The name of the method that handles the action
       # * false           - No valid method name could be found.
-      # Raise AbstractController::ActionNotFound.
+      # Raise +AbstractController::ActionNotFound+.
       def _find_action_name(action_name)
         _valid_action_name?(action_name) && method_for_action(action_name)
       end
@@ -226,11 +238,11 @@ module AbstractController
       # with a template matching the action name is considered to exist.
       #
       # If you override this method to handle additional cases, you may
-      # also provide a method (like _handle_method_missing) to handle
+      # also provide a method (like +_handle_method_missing+) to handle
       # the case.
       #
-      # If none of these conditions are true, and method_for_action
-      # returns nil, an AbstractController::ActionNotFound exception will be raised.
+      # If none of these conditions are true, and +method_for_action+
+      # returns +nil+, an +AbstractController::ActionNotFound+ exception will be raised.
       #
       # ==== Parameters
       # * <tt>action_name</tt> - An action name to find a method name for

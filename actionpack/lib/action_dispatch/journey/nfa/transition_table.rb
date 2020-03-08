@@ -1,4 +1,6 @@
-require 'action_dispatch/journey/nfa/dot'
+# frozen_string_literal: true
+
+require "action_dispatch/journey/nfa/dot"
 
 module ActionDispatch
   module Journey # :nodoc:
@@ -10,7 +12,7 @@ module ActionDispatch
         attr_reader :memos
 
         def initialize
-          @table     = Hash.new { |h,f| h[f] = {} }
+          @table     = Hash.new { |h, f| h[f] = {} }
           @memos     = {}
           @accepting = nil
           @inverted  = nil
@@ -92,7 +94,6 @@ module ActionDispatch
         end
 
         private
-
           def inverted
             return @inverted if @inverted
 

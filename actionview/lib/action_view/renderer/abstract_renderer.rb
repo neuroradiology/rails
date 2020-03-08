@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module ActionView
   # This class defines the interface for a renderer. Each class that
   # subclasses +AbstractRenderer+ is used by the base +Renderer+ class to
@@ -12,10 +14,10 @@ module ActionView
   #
   # Whenever the +render+ method is called on the base +Renderer+ class, a new
   # renderer object of the correct type is created, and the +render+ method on
-  # that new object is called in turn. This abstracts the setup and rendering
+  # that new object is called in turn. This abstracts the set up and rendering
   # into a separate classes for partials and templates.
   class AbstractRenderer #:nodoc:
-    delegate :find_template, :find_file, :template_exists?, :any_templates?, :with_fallbacks, :with_layout_format, :formats, :to => :@lookup_context
+    delegate :template_exists?, :any_templates?, :formats, to: :@lookup_context
 
     def initialize(lookup_context)
       @lookup_context = lookup_context
@@ -25,29 +27,80 @@ module ActionView
       raise NotImplementedError
     end
 
-    protected
+    class RenderedCollection # :nodoc:
+      def self.empty(format)
+        EmptyCollection.new format
+      end
 
-    def extract_details(options)
-      @lookup_context.registered_details.each_with_object({}) do |key, details|
-        value = options[key]
+      attr_reader :rendered_templates
 
-        details[key] = Array(value) if value
+      def initialize(rendered_templates, spacer)
+        @rendered_templates = rendered_templates
+        @spacer = spacer
+      end
+
+      def body
+        @rendered_templates.map(&:body).join(@spacer.body).html_safe
+      end
+
+      def format
+        rendered_templates.first.format
+      end
+
+      class EmptyCollection
+        attr_reader :format
+
+        def initialize(format)
+          @format = format
+        end
+
+        def body; nil; end
       end
     end
 
-    def instrument(name, **options)
-      options[:identifier] ||= (@template && @template.identifier) || @path
+    class RenderedTemplate # :nodoc:
+      attr_reader :body, :template
 
-      ActiveSupport::Notifications.instrument("render_#{name}.action_view", options) do |payload|
-        yield payload
+      def initialize(body, template)
+        @body = body
+        @template = template
       end
+
+      def format
+        template.format
+      end
+
+      EMPTY_SPACER = Struct.new(:body).new
     end
 
-    def prepend_formats(formats)
-      formats = Array(formats)
-      return if formats.empty? || @lookup_context.html_fallback_for_js
+    private
+      def extract_details(options) # :doc:
+        @lookup_context.registered_details.each_with_object({}) do |key, details|
+          value = options[key]
 
-      @lookup_context.formats = formats | @lookup_context.formats
-    end
+          details[key] = Array(value) if value
+        end
+      end
+
+      def instrument(name, **options) # :doc:
+        ActiveSupport::Notifications.instrument("render_#{name}.action_view", options) do |payload|
+          yield payload
+        end
+      end
+
+      def prepend_formats(formats) # :doc:
+        formats = Array(formats)
+        return if formats.empty? || @lookup_context.html_fallback_for_js
+
+        @lookup_context.formats = formats | @lookup_context.formats
+      end
+
+      def build_rendered_template(content, template)
+        RenderedTemplate.new content, template
+      end
+
+      def build_rendered_collection(templates, spacer)
+        RenderedCollection.new templates, spacer
+      end
   end
 end

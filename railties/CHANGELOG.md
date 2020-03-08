@@ -1,507 +1,171 @@
-*   The application generator writes a new file `config/spring.rb`, which tells
-    Spring to watch additional common files.
+*   `rails stats` will now count TypeScript files toward JavaScript stats.
 
-    *Xavier Noria*
+    *Joshua Cody*
 
-*   The tasks in the rails task namespace is deprecated in favor of app namespace.
-    (e.g. `rails:update` and `rails:template` tasks is renamed to `app:update` and `app:template`.)
+*   Run `git init` when generating plugins.
 
-    *Ryo Hashimoto*
+    Opt out with `--skip-git`.
 
-*   Enable HSTS with IncludeSudomains header for new applications.
+    *OKURA Masafumi*
 
-    *Egor Homakov*, *Prathamesh Sonpatki*
+*   Add benchmark generator.
 
-## Rails 5.0.0.beta3 (February 24, 2016) ##
+    Introduce benchmark generator to benchmark Rails applications.
 
-*   Alias `rake` with `rails_command` in the Rails Application Templates API
-    following Rails 5 convention of preferring "rails" to "rake" to run tasks.
+      `rails generate benchmark opt_compare`
 
-    *claudiob*
+    This creates a benchmark file that uses [`benchmark-ips`](https://github.com/evanphx/benchmark-ips).
+    By default, two code blocks can be benchmarked using the `before` and `after` reports.
 
-*   Generate applications with an option to log to STDOUT in production
-    using the environment variable `RAILS_LOG_TO_STDOUT`.
+    You can run the generated benchmark file using:
+      `ruby script/benchmarks/opt_compare.rb`
 
-    *Richard Schneeman*
+    *Kevin Jalbert*, *Gannon McGibbon*
 
-*   Change fail fast of `bin/rails test` interrupts run on error.
+*   Cache compiled view templates when running tests by default.
 
-    *Yuji Yaginuma*
+    When generating a new app without `--skip-spring`, caching classes is
+    disabled in `environments/test.rb`. This implicitly disables caching
+    view templates too. This change will enable view template caching by
+    adding this to the generated `environments/test.rb`:
 
-*   The application generator supports `--skip-listen` to opt-out of features
-    that depend on the listen gem. As of this writing they are the evented file
-    system monitor and the async plugin for spring.
-
-*   The Gemfiles of new applications include spring-watcher-listen on Linux and
-    Mac OS X (unless --skip-spring).
-
-    *Xavier Noria*
-
-*   New applications are generated with the evented file system monitor enabled
-    on Linux and Mac OS X.
-
-    *Xavier Noria*
-
-*   Add dummy files for apple-touch-icon.png and apple-touch-icon.png. GH#23427
-
-    *Alexey Zabelin*
-
-## Rails 5.0.0.beta2 (February 01, 2016) ##
-
-*   Add `after_bundle` callbacks in Rails plugin templates.  Useful for allowing
-    templates to perform actions that are dependent upon `bundle install`.
-
-    *Ryan Manuel*
-
-*   Bring back `TEST=` env for `rake test` task.
-
-    *Yves Senn*
-
-*   Specify log file names or all logs to clear `rake log:clear`
-
-    Specify which logs to clear when using the `rake log:clear` task, e.g. `rake log:clear LOGS=test,staging`
-
-    Clear all logs from log/*.log e.g. `rake log:clear LOGS=all`
-
-    By default `rake log:clear` clears standard environment log files i.e. 'development,test,production'
-
-    *Pramod Shinde*
-
-*   Fix using `add_source` with a block after using `gem` in a custom generator.
-
-    *Will Fisher*
-
-
-## Rails 5.0.0.beta1 (December 18, 2015) ##
-
-*   Newly generated plugins get a `README.md` in Markdown.
-
-    *Yuji Yaginuma*
-
-*   The generated config file for the development environment includes a new
-    config line, commented out, showing how to enable the evented file watcher.
-
-    *Xavier Noria*
-
-*   `config.debug_exception_response_format` configures the format used
-    in responses when errors occur in development mode.
-
-    Set `config.debug_exception_response_format` to render an HTML page with
-    debug info (using the value `:default`) or render debug info preserving
-    the response format (using the value `:api`).
-
-    *Jorge Bejar*
-
-*   Fix setting exit status code for rake test tasks. The exit status code
-    was not set when tests were fired with `rake`. Now, it is being set and it matches
-    behavior of running tests via `rails` command (`rails test`), so no matter if
-    `rake test` or `rails test` command is used the exit code will be set.
-
-    *Arkadiusz Fal*
-
-*   Add Command infrastructure to replace rake.
-
-    Also move `rake dev:cache` to new infrastructure. You'll need to use
-    `rails dev:cache` to toggle development caching from now on.
-
-    *Chuck Callebs*
-
-*   Allow use of minitest-rails gem with Rails test runner.
-
-    Fixes #22455.
-
-    *Chris Kottom*
-
-*   Add `bin/test` script to rails plugin.
-
-    `bin/test` can use the same API as `bin/rails test`.
-
-    *Yuji Yaginuma*
-
-*   Make `static_index` part of the `config.public_file_server` config and
-    call it `public_file_server.index_name`.
-
-    *Yuki Nishijima*
-
-*   Deprecate `serve_static_files` in favor of `public_file_server.enabled`.
-
-    Unifies the static asset options under `public_file_server`.
-
-    To upgrade, replace occurrences of:
-
-    ```
-    config.serve_static_files = # false or true
+    ```ruby
+    config.action_view.cache_template_loading = true
     ```
 
-    in your environment files, with:
+    *Jorge Manrubia*
 
-    ```
-    config.public_file_server.enabled = # false or true
-    ```
+*   Introduce middleware move operations.
 
-    *Kasper Timm Hansen*
+    With this change, you no longer need to delete and reinsert a middleware to
+    move it from one place to another in the stack:
 
-*   Deprecate `config.static_cache_control` in favor of
-    `config.public_file_server.headers`.
-
-    To upgrade, replace occurrences of:
-
-    ```
-    config.static_cache_control = 'public, max-age=60'
+    ```ruby
+    config.middleware.move_before ActionDispatch::Flash, Magical::Unicorns
     ```
 
-    in your environment files, with:
+    This will move the `Magical::Unicorns` middleware before
+    `ActionDispatch::Flash`. You can also move it after with:
 
-    ```
-    config.public_file_server.headers = {
-      'Cache-Control' => 'public, max-age=60'
-    }
-    ```
-
-    `config.public_file_server.headers` can set arbitrary headers, sent along when
-    a response is delivered.
-
-    *Yuki Nishijima*
-
-*   Route generator should be idempotent
-    running generators several times no longer require you to cleanup routes.rb
-
-    *Thiago Pinto*
-
-*   Allow passing an environment to `config_for`.
-
-    *Simon Eskildsen*
-
-*   Allow rake:stats to account for rake tasks in lib/tasks
-
-    *Kevin Deisz*
-
-*   Added javascript to update the URL on mailer previews with the currently
-    selected email format. Reloading the page now keeps you on your selected
-    format rather than going back to the default html version.
-
-    *James Kerr*
-
-*   Add fail fast to `bin/rails test`
-
-    Adding `--fail-fast` or `-f` when running tests will interrupt the run on
-    the first failure:
-
-    ```
-    # Running:
-
-    ................................................S......E
-
-    ArgumentError: Wups! Bet you didn't expect this!
-        test/models/bunny_test.rb:19:in `block in <class:BunnyTest>'
-
-    bin/rails test test/models/bunny_test.rb:18
-
-    ....................................F
-
-    This failed
-
-    bin/rails test test/models/bunny_test.rb:14
-
-    Interrupted. Exiting...
-
-
-    Finished in 0.051427s, 1808.3872 runs/s, 1769.4972 assertions/s.
-
+    ```ruby
+    config.middleware.move_after ActionDispatch::Flash, Magical::Unicorns
     ```
 
-    Note that any unexpected errors don't abort the run.
+    *Genadi Samokovarov*
 
-    *Kasper Timm Hansen*
+*   Generators that inherit from NamedBase respect `--force` option.
 
-*   Add inline output to `bin/rails test`
+    *Josh Brody*
 
-    Any failures or errors (and skips if running in verbose mode) are output
-    during a test run:
+*   Allow configuration of eager_load behaviour for rake environment:
 
-    ```
-    # Running:
+        config.rake_eager_load
 
-    .....S..........................................F
+    Defaults to `false` as per previous behaviour.
 
-    This failed
+    *Thierry Joyal*
 
-    bin/rails test test/models/bunny_test.rb:14
+*   Ensure Rails migration generator respects system-wide primary key config.
 
-    .................................E
+    When rails is configured to use a specific primary key type:
 
-    ArgumentError: Wups! Bet you didn't expect this!
-        test/models/bunny_test.rb:19:in `block in <class:BunnyTest>'
-
-    bin/rails test test/models/bunny_test.rb:18
-
-    ....................
-
-    Finished in 0.069708s, 1477.6019 runs/s, 1448.9106 assertions/s.
+    ```ruby
+    config.generators do |g|
+      g.orm :active_record, primary_key_type: :uuid
+    end
     ```
 
-    Output can be deferred to after a run with the `--defer-output` option.
+    Previously:
 
-    *Kasper Timm Hansen*
+    ```
+    $ bin/rails g migration add_location_to_users location:references
+    ```
 
-*   Fix displaying mailer previews on non local requests when config
-    `action_mailer.show_previews` is set
+    The references line in the migration would not have `type: :uuid`.
+    This change causes the type to be applied appropriately.
 
-    *Wojciech Wnętrzak*
+    *Louis-Michel Couture*, *Dermot Haughey*
 
-*   `rails server` will now honour the `PORT` environment variable
+*   Deprecate `Rails::DBConsole#config`.
 
-    *David Cornu*
+    `Rails::DBConsole#config` is deprecated without replacement. Use `Rails::DBConsole.db_config.configuration_hash` instead.
 
-*   Plugins generated using `rails plugin new` are now generated with the
-    version number set to 0.1.0.
+    *Eileen M. Uchitelle*, *John Crepezzi*
 
-    *Daniel Morris*
+*   `Rails.application.config_for` merges shared configuration deeply.
 
-*   `I18n.load_path` is now reloaded under development so there's no need to
-    restart the server to make new locale files available. Also, I18n will no
-    longer raise for deleted locale files.
+    ```yaml
+    # config/example.yml
+    shared:
+      foo:
+        bar:
+          baz: 1
+    development:
+      foo:
+        bar:
+          qux: 2
+    ```
 
-    *Kir Shatrov*
+    ```ruby
+    # Previously
+    Rails.application.config_for(:example)[:foo][:bar] #=> { qux: 2 }
 
-*   Add `bin/update` script to update development environment automatically.
+    # Now
+    Rails.application.config_for(:example)[:foo][:bar] #=> { baz: 1, qux: 2 }
+    ```
 
-    *Mehmet Emin İNAÇ*
+    *Yuhei Kiriyama*
 
-*   Fix STATS_DIRECTORIES already defined warning when running rake from within
-    the top level directory of an engine that has a test app.
+*   Remove access to values in nested hashes returned by `Rails.application.config_for` via String keys.
 
-    Fixes #20510.
+    ```yaml
+    # config/example.yml
+    development:
+      options:
+        key: value
+    ```
 
-    *Ersin Akinci*
+    ```ruby
+    Rails.application.config_for(:example).options
+    ```
 
-*   Make enabling or disabling caching in development mode possible with
-    rake dev:cache.
+    This used to return a Hash on which you could access values with String keys. This was deprecated in 6.0, and now doesn't work anymore.
 
-    Running rake dev:cache will create or remove tmp/caching-dev.txt. When this
-    file exists config.action_controller.perform_caching will be set to true in
-    config/environments/development.rb.
+    *Étienne Barrié*
 
-    Additionally, a server can be started with either --dev-caching or
-    --no-dev-caching included to toggle caching on startup.
+*   Configuration files for environments (`config/environments/*.rb`) are
+    now able to modify `autoload_paths`, `autoload_once_paths`, and
+    `eager_load_paths`.
 
-    *Jussi Mertanen*, *Chuck Callebs*
+    As a consequence, applications cannot autoload within those files. Before, they technically could, but changes in autoloaded classes or modules had no effect anyway in the configuration because reloading does not reboot.
 
-*   Add a `--api` option in order to generate plugins that can be added
-    inside an API application.
+    Ways to use application code in these files:
 
-    *Robin Dupret*
+    * Define early in the boot process a class that is not reloadable, from which the application takes configuration values that get passed to the framework.
 
-*   Fix `NoMethodError` when generating a scaffold inside a full engine.
+        ```ruby
+        # In config/application.rb, for example.
+        require "#{Rails.root}/lib/my_app/config"
 
-    *Yuji Yaginuma*
+        # In config/environments/development.rb, for example.
+        config.foo = MyApp::Config.foo
+        ```
 
-*   Adding support for passing a block to the `add_source` action of a custom generator
+    * If the class has to be reloadable, then wrap the configuration code in a `to_prepare` block:
 
-    *Mike Dalton*, *Hirofumi Wakasugi*
+        ```ruby
+        config.to_prepare do
+          config.foo = MyModel.foo
+        end
+        ```
 
-*   `assert_file` understands paths with special characters
-    (eg. `v0.1.4~alpha+nightly`).
+      That assigns the latest `MyModel.foo` to `config.foo` when the application boots, and each time there is a reload. But whether that has an effect or not depends on the configuration point, since it is not uncommon for engines to read the application configuration during initialization and set their own state from them. That process happens only on boot, not on reloads, and if that is how `config.foo` worked, resetting it would have no effect in the state of the engine.
 
-    *Diego Carrion*
+    *Allen Hsu* & *Xavier Noria*
 
-*   Remove ContentLength middleware from the defaults.  If you want it, just
-    add it as a middleware in your config.
+*   Support using environment variable to set pidfile.
 
-    *Egg McMuffin*
+    *Ben Thorner*
 
-*   Make it possible to customize the executable inside rerun snippets.
 
-    *Yves Senn*
-
-*   Add support for API only apps.
-    Middleware stack was slimmed down and it has only the needed
-    middleware for API apps & generators generates the right files,
-    folders and configurations.
-
-    *Santiago Pastorino*, *Jorge Bejar*
-
-*   Make generated scaffold functional tests work inside engines.
-
-    *Yuji Yaginuma*
-
-*   Generate a `.keep` file in the `tmp` folder by default as many scripts
-    assume the existence of this folder and most would fail if it is absent.
-
-    See #20299.
-
-    *Yoong Kang Lim*, *Sunny Juneja*
-
-*   `config.static_index` configures directory `index.html` filename
-
-    Set `config.static_index` to serve a static directory index file not named
-    `index`. E.g. to serve `main.html` instead of `index.html` for directory
-    requests, set `config.static_index` to `"main"`.
-
-    *Eliot Sykes*
-
-*   `bin/setup` uses built-in rake tasks (`log:clear`, `tmp:clear`).
-
-    *Mohnish Thallavajhula*
-
-*   Fix mailer previews with attachments by using the mail gem's own API to
-    locate the first part of the correct mime type.
-
-    Fixes #14435.
-
-    *Andrew White*
-
-*   Remove sqlite support from `rails dbconsole`.
-
-    *Andrew White*
-
-*   Rename `railties/bin` to `railties/exe` to match the new Bundler executables
-    convention.
-
-    *Islam Wazery*
-
-*   Print `bundle install` output in `rails new` as soon as it's available.
-
-    Running `rails new` will now print the output of `bundle install` as
-    it is available, instead of waiting until all gems finish installing.
-
-    *Max Holder*
-
-*   Respect `pluralize_table_names` when generating fixture file.
-
-    Fixes #19519.
-
-    *Yuji Yaginuma*
-
-*   Add a new-line to the end of route method generated code.
-
-    We need to add a `\n`, because we cannot have two routes
-    in the same line.
-
-    *arthurnn*
-
-*   Add `rake initializers`.
-
-    This task prints out all defined initializers in the order they are invoked
-    by Rails. This is helpful for debugging issues related to the initialization
-    process.
-
-    *Naoto Kaneko*
-
-*   Created rake restart task. Restarts your Rails app by touching the
-    `tmp/restart.txt`.
-
-    See #18876.
-
-    *Hyonjee Joo*
-
-*   Add `config/initializers/active_record_belongs_to_required_by_default.rb`.
-
-    Newly generated Rails apps have a new initializer called
-    `active_record_belongs_to_required_by_default.rb` which sets the value of
-    the configuration option `config.active_record.belongs_to_required_by_default`
-    to `true` when ActiveRecord is not skipped.
-
-    As a result, new Rails apps require `belongs_to` association on model
-    to be valid.
-
-    This initializer is *not* added when running `rake rails:update`, so
-    old apps ported to Rails 5 will work without any change.
-
-    *Josef Šimánek*
-
-*   `delete` operations in configurations are run last in order to eliminate
-    'No such middleware' errors when `insert_before` or `insert_after` are added
-    after the `delete` operation for the middleware being deleted.
-
-    Fixes #16433.
-
-    *Guo Xiang Tan*
-
-*   Newly generated applications get a `README.md` in Markdown.
-
-    *Xavier Noria*
-
-*   Remove the documentation tasks `doc:app`, `doc:rails`, and `doc:guides`.
-
-    *Xavier Noria*
-
-*   Force generated routes to be inserted into `config/routes.rb`.
-
-    *Andrew White*
-
-*   Don't remove all line endings from `config/routes.rb` when revoking scaffold.
-
-    Fixes #15913.
-
-    *Andrew White*
-
-*   Rename `--skip-test-unit` option to `--skip-test` in app generator
-
-    *Melanie Gilman*
-
-*   Add the `method_source` gem to the default Gemfile for apps.
-
-    *Sean Griffin*
-
-*   Drop old test locations from `rake stats`:
-
-    - test/functional
-    - test/unit
-
-    *Ravil Bayramgalin*
-
-*   Update `rake stats` to  correctly count declarative tests
-    as methods in `_test.rb` files.
-
-    *Ravil Bayramgalin*
-
-*   Remove deprecated `test:all` and `test:all:db` tasks.
-
-    *Rafael Mendonça França*
-
-*   Remove deprecated `Rails::Rack::LogTailer`.
-
-    *Rafael Mendonça França*
-
-*   Remove deprecated `RAILS_CACHE` constant.
-
-    *Rafael Mendonça França*
-
-*   Remove deprecated `serve_static_assets` configuration.
-
-    *Rafael Mendonça França*
-
-*   Use local variables in `_form.html.erb` partial generated by scaffold.
-
-    *Andrew Kozlov*
-
-*   Add `config/initializers/callback_terminator.rb`.
-
-    Newly generated Rails apps have a new initializer called
-    `callback_terminator.rb` which sets the value of the configuration option
-    `ActiveSupport.halt_callback_chains_on_return_false` to `false`.
-
-    As a result, new Rails apps do not halt Active Record and Active Model
-    callback chains when a callback returns `false`; only when they are
-    explicitly halted with `throw(:abort)`.
-
-    The terminator is *not* added when running `rake rails:update`, so returning
-    `false` will still work on old apps ported to Rails 5, displaying a
-    deprecation warning to prompt users to update their code to the new syntax.
-
-    *claudiob*
-
-*   Generated fixtures won't use the id when generated with references attributes.
-
-    *Pablo Olmos de Aguilera Corradini*
-
-*   Add `--skip-action-mailer` option to the app generator.
-
-    *claudiob*
-
-*   Autoload any second level directories called `app/*/concerns`.
-
-    *Alex Robbin*
-
-Please check [4-2-stable](https://github.com/rails/rails/blob/4-2-stable/railties/CHANGELOG.md) for previous changes.
+Please check [6-0-stable](https://github.com/rails/rails/blob/6-0-stable/railties/CHANGELOG.md) for previous changes.

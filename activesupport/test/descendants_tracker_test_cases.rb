@@ -1,4 +1,6 @@
-require 'set'
+# frozen_string_literal: true
+
+require "set"
 
 module DescendantsTrackerTestCases
   class Parent
@@ -25,6 +27,15 @@ module DescendantsTrackerTestCases
     assert_equal_sets [], Child2.descendants
   end
 
+  def test_descendants_with_garbage_collected_classes
+    1.times do
+      child_klass = Class.new(Parent)
+      assert_equal_sets [Child1, Grandchild1, Grandchild2, Child2, child_klass], Parent.descendants
+    end
+    GC.start
+    assert_equal_sets [Child1, Grandchild1, Grandchild2, Child2], Parent.descendants
+  end
+
   def test_direct_descendants
     assert_equal_sets [Child1, Child2], Parent.direct_descendants
     assert_equal_sets [Grandchild1, Grandchild2], Child1.direct_descendants
@@ -35,31 +46,30 @@ module DescendantsTrackerTestCases
     mark_as_autoloaded(*ALL) do
       ActiveSupport::DescendantsTracker.clear
       ALL.each do |k|
-        assert ActiveSupport::DescendantsTracker.descendants(k).empty?
+        assert_empty ActiveSupport::DescendantsTracker.descendants(k)
       end
     end
   end
 
-  protected
-
-  def assert_equal_sets(expected, actual)
-    assert_equal Set.new(expected), Set.new(actual)
-  end
-
-  def mark_as_autoloaded(*klasses)
-    # If ActiveSupport::Dependencies is not loaded, forget about autoloading.
-    # This allows using AS::DescendantsTracker without AS::Dependencies.
-    if defined? ActiveSupport::Dependencies
-      old_autoloaded = ActiveSupport::Dependencies.autoloaded_constants.dup
-      ActiveSupport::Dependencies.autoloaded_constants = klasses.map(&:name)
+  private
+    def assert_equal_sets(expected, actual)
+      assert_equal Set.new(expected), Set.new(actual)
     end
 
-    old_descendants = ActiveSupport::DescendantsTracker.class_eval("@@direct_descendants").dup
-    old_descendants.each { |k, v| old_descendants[k] = v.dup }
+    def mark_as_autoloaded(*klasses)
+      # If ActiveSupport::Dependencies is not loaded, forget about autoloading.
+      # This allows using AS::DescendantsTracker without AS::Dependencies.
+      if defined? ActiveSupport::Dependencies
+        old_autoloaded = ActiveSupport::Dependencies.autoloaded_constants.dup
+        ActiveSupport::Dependencies.autoloaded_constants = klasses.map(&:name)
+      end
 
-    yield
-  ensure
-    ActiveSupport::Dependencies.autoloaded_constants = old_autoloaded if defined? ActiveSupport::Dependencies
-    ActiveSupport::DescendantsTracker.class_eval("@@direct_descendants").replace(old_descendants)
-  end
+      old_descendants = ActiveSupport::DescendantsTracker.class_eval("@@direct_descendants").dup
+      old_descendants.each { |k, v| old_descendants[k] = v.dup }
+
+      yield
+    ensure
+      ActiveSupport::Dependencies.autoloaded_constants = old_autoloaded if defined? ActiveSupport::Dependencies
+      ActiveSupport::DescendantsTracker.class_eval("@@direct_descendants").replace(old_descendants)
+    end
 end

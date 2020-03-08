@@ -1,16 +1,22 @@
-require 'active_job'
-require 'support/job_buffer'
+# frozen_string_literal: true
 
-ActiveSupport.halt_callback_chains_on_return_false = false
-GlobalID.app = 'aj'
+require "active_job"
+require "support/job_buffer"
 
-@adapter  = ENV['AJ_ADAPTER'] || 'inline'
+GlobalID.app = "aj"
 
-if ENV['AJ_INTEGRATION_TESTS']
-  require 'support/integration/helper'
+@adapter = ENV["AJ_ADAPTER"] ||= "inline"
+puts "Using #{@adapter}"
+
+if ENV["AJ_INTEGRATION_TESTS"]
+  require "support/integration/helper"
 else
   ActiveJob::Base.logger = Logger.new(nil)
+  ActiveJob::Base.skip_after_callbacks_if_terminated = true
+  ActiveJob::Base.return_false_on_aborted_enqueue = true
   require "adapters/#{@adapter}"
 end
 
-require 'active_support/testing/autorun'
+require "active_support/testing/autorun"
+
+require_relative "../../tools/test_common"

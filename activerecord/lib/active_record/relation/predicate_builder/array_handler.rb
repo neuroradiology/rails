@@ -1,3 +1,7 @@
+# frozen_string_literal: true
+
+require "active_support/core_ext/array/extract"
+
 module ActiveRecord
   class PredicateBuilder
     class ArrayHandler # :nodoc:
@@ -6,18 +10,21 @@ module ActiveRecord
       end
 
       def call(attribute, value)
+        return attribute.in([]) if value.empty?
+
         values = value.map { |x| x.is_a?(Base) ? x.id : x }
-        nils, values = values.partition(&:nil?)
-
-        return attribute.in([]) if values.empty? && nils.empty?
-
-        ranges, values = values.partition { |v| v.is_a?(Range) }
+        nils = values.extract!(&:nil?)
+        ranges = values.extract! { |v| v.is_a?(Range) }
 
         values_predicate =
           case values.length
           when 0 then NullPredicate
           when 1 then predicate_builder.build(attribute, values.first)
-          else attribute.in(values)
+          else
+            values.map! do |v|
+              predicate_builder.build_bind_attribute(attribute.name, v)
+            end
+            values.empty? ? NullPredicate : attribute.in(values)
           end
 
         unless nils.empty?
@@ -26,18 +33,17 @@ module ActiveRecord
 
         array_predicates = ranges.map { |range| predicate_builder.build(attribute, range) }
         array_predicates.unshift(values_predicate)
-        array_predicates.inject { |composite, predicate| composite.or(predicate) }
+        array_predicates.inject(&:or)
       end
 
-      protected
+      private
+        attr_reader :predicate_builder
 
-      attr_reader :predicate_builder
-
-      module NullPredicate # :nodoc:
-        def self.or(other)
-          other
+        module NullPredicate # :nodoc:
+          def self.or(other)
+            other
+          end
         end
-      end
     end
   end
 end

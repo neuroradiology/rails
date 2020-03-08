@@ -1,14 +1,7 @@
+# frozen_string_literal: true
+
 module ActiveRecord
   class PredicateBuilder # :nodoc:
-    require 'active_record/relation/predicate_builder/array_handler'
-    require 'active_record/relation/predicate_builder/association_query_handler'
-    require 'active_record/relation/predicate_builder/base_handler'
-    require 'active_record/relation/predicate_builder/basic_object_handler'
-    require 'active_record/relation/predicate_builder/class_handler'
-    require 'active_record/relation/predicate_builder/polymorphic_array_handler'
-    require 'active_record/relation/predicate_builder/range_handler'
-    require 'active_record/relation/predicate_builder/relation_handler'
-
     delegate :resolve_column_aliases, to: :table
 
     def initialize(table)
@@ -16,34 +9,16 @@ module ActiveRecord
       @handlers = []
 
       register_handler(BasicObject, BasicObjectHandler.new(self))
-      register_handler(Class, ClassHandler.new(self))
       register_handler(Base, BaseHandler.new(self))
       register_handler(Range, RangeHandler.new(self))
-      register_handler(RangeHandler::RangeWithBinds, RangeHandler.new(self))
       register_handler(Relation, RelationHandler.new)
       register_handler(Array, ArrayHandler.new(self))
-      register_handler(AssociationQueryValue, AssociationQueryHandler.new(self))
-      register_handler(PolymorphicArrayValue, PolymorphicArrayHandler.new(self))
+      register_handler(Set, ArrayHandler.new(self))
     end
 
     def build_from_hash(attributes)
       attributes = convert_dot_notation_to_hash(attributes)
       expand_from_hash(attributes)
-    end
-
-    def create_binds(attributes)
-      attributes = convert_dot_notation_to_hash(attributes)
-      create_binds_for_hash(attributes)
-    end
-
-    def expand(column, value)
-      # Find the foreign key when using queries such as:
-      # Post.where(author: author)
-      #
-      # For polymorphic relationships, find the foreign key and type:
-      # PriceEstimate.where(estimate_of: treasure)
-      value = AssociationQueryHandler.value_for(table, column, value) if table.associated_with?(column)
-      build(table.arel_attribute(column), value)
     end
 
     def self.references(attributes)
@@ -52,7 +27,7 @@ module ActiveRecord
           key
         else
           key = key.to_s
-          key.split('.'.freeze).first if key.include?('.'.freeze)
+          key.split(".").first if key.include?(".")
         end
       end.compact
     end
@@ -73,94 +48,99 @@ module ActiveRecord
     end
 
     def build(attribute, value)
-      handler_for(value).call(attribute, value)
+      if table.type(attribute.name).force_equality?(value)
+        bind = build_bind_attribute(attribute.name, value)
+        attribute.eq(bind)
+      else
+        handler_for(value).call(attribute, value)
+      end
+    end
+
+    def build_bind_attribute(column_name, value)
+      attr = Relation::QueryAttribute.new(column_name.to_s, value, table.type(column_name))
+      Arel::Nodes::BindParam.new(attr)
     end
 
     protected
+      def expand_from_hash(attributes)
+        return ["1=0"] if attributes.empty?
 
-    attr_reader :table
+        attributes.flat_map do |key, value|
+          if value.is_a?(Hash) && !table.has_column?(key)
+            table.associated_predicate_builder(key).expand_from_hash(value)
+          elsif table.associated_with?(key)
+            # Find the foreign key when using queries such as:
+            # Post.where(author: author)
+            #
+            # For polymorphic relationships, find the foreign key and type:
+            # PriceEstimate.where(estimate_of: treasure)
+            associated_table = table.associated_table(key)
+            if associated_table.polymorphic_association?
+              case value.is_a?(Array) ? value.first : value
+              when Base, Relation
+                value = [value] unless value.is_a?(Array)
+                klass = PolymorphicArrayValue
+              end
+            end
 
-    def expand_from_hash(attributes)
-      return ["1=0"] if attributes.empty?
-
-      attributes.flat_map do |key, value|
-        if value.is_a?(Hash)
-          associated_predicate_builder(key).expand_from_hash(value)
-        else
-          expand(key, value)
+            klass ||= AssociationQueryValue
+            queries = klass.new(associated_table, value).queries.map do |query|
+              expand_from_hash(query).reduce(&:and)
+            end
+            queries.reduce(&:or)
+          elsif table.aggregated_with?(key)
+            mapping = table.reflect_on_aggregation(key).mapping
+            values = value.nil? ? [nil] : Array.wrap(value)
+            if mapping.length == 1 || values.empty?
+              column_name, aggr_attr = mapping.first
+              values = values.map do |object|
+                object.respond_to?(aggr_attr) ? object.public_send(aggr_attr) : object
+              end
+              build(table.arel_attribute(column_name), values)
+            else
+              queries = values.map do |object|
+                mapping.map do |field_attr, aggregate_attr|
+                  build(table.arel_attribute(field_attr), object.try!(aggregate_attr))
+                end.reduce(&:and)
+              end
+              queries.reduce(&:or)
+            end
+          else
+            build(table.arel_attribute(key), value)
+          end
         end
       end
-    end
-
-
-    def create_binds_for_hash(attributes)
-      result = attributes.dup
-      binds = []
-
-      attributes.each do |column_name, value|
-        case value
-        when Hash
-          attrs, bvs = associated_predicate_builder(column_name).create_binds_for_hash(value)
-          result[column_name] = attrs
-          binds += bvs
-        when Relation
-          binds += value.bound_attributes
-        when Range
-          first = value.begin
-          last = value.end
-          unless first.respond_to?(:infinite?) && first.infinite?
-            binds << build_bind_param(column_name, first)
-            first = Arel::Nodes::BindParam.new
-          end
-          unless last.respond_to?(:infinite?) && last.infinite?
-            binds << build_bind_param(column_name, last)
-            last = Arel::Nodes::BindParam.new
-          end
-
-          result[column_name] = RangeHandler::RangeWithBinds.new(first, last, value.exclude_end?)
-        else
-          if can_be_bound?(column_name, value)
-            result[column_name] = Arel::Nodes::BindParam.new
-            binds << build_bind_param(column_name, value)
-          end
-        end
-      end
-
-      [result, binds]
-    end
 
     private
+      attr_reader :table
 
-    def associated_predicate_builder(association_name)
-      self.class.new(table.associated_table(association_name))
-    end
+      def convert_dot_notation_to_hash(attributes)
+        dot_notation = attributes.select do |k, v|
+          k.include?(".") && !v.is_a?(Hash)
+        end
 
-    def convert_dot_notation_to_hash(attributes)
-      dot_notation = attributes.keys.select { |s| s.include?(".".freeze) }
+        dot_notation.each_key do |key|
+          table_name, column_name = key.split(".")
+          value = attributes.delete(key)
+          attributes[table_name] ||= {}
 
-      dot_notation.each do |key|
-        table_name, column_name = key.split(".".freeze)
-        value = attributes.delete(key)
-        attributes[table_name] ||= {}
+          attributes[table_name] = attributes[table_name].merge(column_name => value)
+        end
 
-        attributes[table_name] = attributes[table_name].merge(column_name => value)
+        attributes
       end
 
-      attributes
-    end
-
-    def handler_for(object)
-      @handlers.detect { |klass, _| klass === object }.last
-    end
-
-    def can_be_bound?(column_name, value)
-      !value.nil? &&
-        handler_for(value).is_a?(BasicObjectHandler) &&
-        !table.associated_with?(column_name)
-    end
-
-    def build_bind_param(column_name, value)
-      Relation::QueryAttribute.new(column_name.to_s, value, table.type(column_name))
-    end
+      def handler_for(object)
+        @handlers.detect { |klass, _| klass === object }.last
+      end
   end
 end
+
+require "active_record/relation/predicate_builder/array_handler"
+require "active_record/relation/predicate_builder/base_handler"
+require "active_record/relation/predicate_builder/basic_object_handler"
+require "active_record/relation/predicate_builder/range_handler"
+require "active_record/relation/predicate_builder/relation_handler"
+
+require "active_record/relation/predicate_builder/association_query_value"
+require "active_record/relation/predicate_builder/polymorphic_array_value"

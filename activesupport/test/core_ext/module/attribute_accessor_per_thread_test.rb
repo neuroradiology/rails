@@ -1,16 +1,33 @@
-require 'abstract_unit'
-require 'active_support/core_ext/module/attribute_accessors_per_thread'
+# frozen_string_literal: true
+
+require_relative "../../abstract_unit"
+require "active_support/core_ext/module/attribute_accessors_per_thread"
 
 class ModuleAttributeAccessorPerThreadTest < ActiveSupport::TestCase
-  def setup
-    @class = Class.new do
-      thread_mattr_accessor :foo
-      thread_mattr_accessor :bar,  instance_writer: false
-      thread_mattr_reader   :shaq, instance_reader: false
-      thread_mattr_accessor :camp, instance_accessor: false
-    end
+  class MyClass
+    thread_mattr_accessor :foo
+    thread_mattr_accessor :bar,  instance_writer: false
+    thread_mattr_reader   :shaq, instance_reader: false
+    thread_mattr_accessor :camp, instance_accessor: false
+  end
 
+  class SubMyClass < MyClass
+  end
+
+  setup do
+    @class = MyClass
+    @subclass = SubMyClass
     @object = @class.new
+  end
+
+  def test_can_initialize_with_default_value
+    Thread.new do
+      @class.thread_mattr_accessor :baz, default: "default_value"
+
+      assert_equal "default_value", @class.baz
+    end.join
+
+    assert_nil @class.baz
   end
 
   def test_should_use_mattr_default
@@ -35,46 +52,46 @@ class ModuleAttributeAccessorPerThreadTest < ActiveSupport::TestCase
       assert_respond_to @class, :foo
       assert_respond_to @class, :foo=
       assert_respond_to @object, :bar
-      assert !@object.respond_to?(:bar=)
+      assert_not_respond_to @object, :bar=
     end.join
   end
 
   def test_should_not_create_instance_reader
     Thread.new do
       assert_respond_to @class, :shaq
-      assert !@object.respond_to?(:shaq)
+      assert_not_respond_to @object, :shaq
     end.join
   end
 
   def test_should_not_create_instance_accessors
     Thread.new do
       assert_respond_to @class, :camp
-      assert !@object.respond_to?(:camp)
-      assert !@object.respond_to?(:camp=)
+      assert_not_respond_to @object, :camp
+      assert_not_respond_to @object, :camp=
     end.join
   end
 
   def test_values_should_not_bleed_between_threads
     threads = []
     threads << Thread.new do
-      @class.foo = 'things'
-      sleep 1
-      assert_equal 'things', @class.foo
+      @class.foo = "things"
+      Thread.pass
+      assert_equal "things", @class.foo
     end
 
     threads << Thread.new do
-      @class.foo = 'other things'
-      sleep 1
-      assert_equal 'other things', @class.foo      
+      @class.foo = "other things"
+      Thread.pass
+      assert_equal "other things", @class.foo
     end
-    
+
     threads << Thread.new do
-      @class.foo = 'really other things'
-      sleep 1
-      assert_equal 'really other things', @class.foo      
+      @class.foo = "really other things"
+      Thread.pass
+      assert_equal "really other things", @class.foo
     end
-    
-    threads.each { |t| t.join }
+
+    threads.each(&:join)
   end
 
   def test_should_raise_name_error_if_attribute_name_is_invalid
@@ -105,5 +122,21 @@ class ModuleAttributeAccessorPerThreadTest < ActiveSupport::TestCase
       end
     end
     assert_equal "invalid attribute name: 2valid_part", exception.message
+  end
+
+  def test_should_return_same_value_by_class_or_instance_accessor
+    @class.foo = "fries"
+
+    assert_equal @class.foo, @object.foo
+  end
+
+  def test_should_not_affect_superclass_if_subclass_set_value
+    @class.foo = "super"
+    assert_equal "super", @class.foo
+    assert_nil @subclass.foo
+
+    @subclass.foo = "sub"
+    assert_equal "super", @class.foo
+    assert_equal "sub", @subclass.foo
   end
 end

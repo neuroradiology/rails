@@ -1,29 +1,30 @@
-require 'active_record/connection_adapters/abstract_mysql_adapter'
+# frozen_string_literal: true
 
-gem 'mysql2', '>= 0.3.18', '< 0.5'
-require 'mysql2'
+require "active_record/connection_adapters/abstract_mysql_adapter"
+require "active_record/connection_adapters/mysql/database_statements"
+
+gem "mysql2", "~> 0.5"
+require "mysql2"
 
 module ActiveRecord
   module ConnectionHandling # :nodoc:
+    ER_BAD_DB_ERROR = 1049
+
     # Establishes a connection to the database that's used by all Active Record objects.
     def mysql2_connection(config)
       config = config.symbolize_keys
-
-      config[:username] = 'root' if config[:username].nil?
       config[:flags] ||= 0
 
-      if Mysql2::Client.const_defined? :FOUND_ROWS
-        if config[:flags].kind_of? Array
-          config[:flags].push "FOUND_ROWS".freeze
-        else
-          config[:flags] |= Mysql2::Client::FOUND_ROWS
-        end
+      if config[:flags].kind_of? Array
+        config[:flags].push "FOUND_ROWS"
+      else
+        config[:flags] |= Mysql2::Client::FOUND_ROWS
       end
 
       client = Mysql2::Client.new(config)
       ConnectionAdapters::Mysql2Adapter.new(client, logger, nil, config)
     rescue Mysql2::Error => error
-      if error.message.include?("Unknown database")
+      if error.error_number == ER_BAD_DB_ERROR
         raise ActiveRecord::NoDatabaseError
       else
         raise
@@ -33,23 +34,47 @@ module ActiveRecord
 
   module ConnectionAdapters
     class Mysql2Adapter < AbstractMysqlAdapter
-      ADAPTER_NAME = 'Mysql2'.freeze
+      ADAPTER_NAME = "Mysql2"
+
+      include MySQL::DatabaseStatements
 
       def initialize(connection, logger, connection_options, config)
-        super
-        @prepared_statements = false
+        superclass_config = config.reverse_merge(prepared_statements: false)
+        super(connection, logger, connection_options, superclass_config)
         configure_connection
       end
 
+      def self.database_exists?(config)
+        !!ActiveRecord::Base.mysql2_connection(config)
+      rescue ActiveRecord::NoDatabaseError
+        false
+      end
+
       def supports_json?
-        !mariadb? && version >= '5.7.8'
+        !mariadb? && database_version >= "5.7.8"
+      end
+
+      def supports_comments?
+        true
+      end
+
+      def supports_comments_in_create?
+        true
+      end
+
+      def supports_savepoints?
+        true
+      end
+
+      def supports_lazy_transactions?
+        true
       end
 
       # HELPER METHODS ===========================================
 
       def each_hash(result) # :nodoc:
         if block_given?
-          result.each(:as => :hash, :symbolize_keys => true) do |row|
+          result.each(as: :hash, symbolize_keys: true) do |row|
             yield row
           end
         else
@@ -74,7 +99,6 @@ module ActiveRecord
       #++
 
       def active?
-        return false unless @connection
         @connection.ping
       end
 
@@ -89,76 +113,41 @@ module ActiveRecord
       # Otherwise, this method does nothing.
       def disconnect!
         super
-        unless @connection.nil?
-          @connection.close
-          @connection = nil
-        end
+        @connection.close
       end
 
-      #--
-      # DATABASE STATEMENTS ======================================
-      #++
-
-      # Returns a record hash with the column names as keys and column values
-      # as values.
-      def select_one(arel, name = nil, binds = [])
-        arel, binds = binds_from_relation(arel, binds)
-        execute(to_sql(arel, binds), name).each(as: :hash) do |row|
-          @connection.next_result while @connection.more_results?
-          return row
-        end
-      end
-
-      # Returns an array of arrays containing the field values.
-      # Order is the same as that returned by +columns+.
-      def select_rows(sql, name = nil, binds = [])
-        result = execute(sql, name)
-        @connection.next_result while @connection.more_results?
-        result.to_a
-      end
-
-      # Executes the SQL statement in the context of this connection.
-      def execute(sql, name = nil)
-        if @connection
-          # make sure we carry over any changes to ActiveRecord::Base.default_timezone that have been
-          # made since we established the connection
-          @connection.query_options[:database_timezone] = ActiveRecord::Base.default_timezone
-        end
-
+      def discard! # :nodoc:
         super
-      end
-
-      def exec_query(sql, name = 'SQL', binds = [], prepare: false)
-        result = execute(sql, name)
-        @connection.next_result while @connection.more_results?
-        ActiveRecord::Result.new(result.fields, result.to_a) if result
-      end
-
-      def exec_delete(sql, name, binds)
-        execute to_sql(sql, binds), name
-        @connection.affected_rows
-      end
-      alias :exec_update :exec_delete
-
-      def last_inserted_id(result)
-        @connection.last_id
+        @connection.automatic_close = false
+        @connection = nil
       end
 
       private
+        def connect
+          @connection = Mysql2::Client.new(@config)
+          configure_connection
+        end
 
-      def connect
-        @connection = Mysql2::Client.new(@config)
-        configure_connection
-      end
+        def configure_connection
+          @connection.query_options[:as] = :array
+          super
+        end
 
-      def configure_connection
-        @connection.query_options.merge!(:as => :array)
-        super
-      end
+        def full_version
+          schema_cache.database_version.full_version_string
+        end
 
-      def full_version
-        @full_version ||= @connection.server_info[:version]
-      end
+        def get_full_version
+          @connection.server_info[:version]
+        end
+
+        def translate_exception(exception, message:, sql:, binds:)
+          if exception.is_a?(Mysql2::Error::TimeoutError) && !exception.error_number
+            ActiveRecord::AdapterTimeout.new(message, sql: sql, binds: binds)
+          else
+            super
+          end
+        end
     end
   end
 end
