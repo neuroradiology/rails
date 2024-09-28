@@ -1,8 +1,21 @@
 # frozen_string_literal: true
 
-require "ostruct"
+require "models/computer"
 
 class Developer < ActiveRecord::Base
+  module TimestampAliases
+    extend ActiveSupport::Concern
+
+    included do
+      alias_attribute :created_at, :legacy_created_at
+      alias_attribute :updated_at, :legacy_updated_at
+      alias_attribute :created_on, :legacy_created_on
+      alias_attribute :updated_on, :legacy_updated_on
+    end
+  end
+
+  include TimestampAliases
+
   module ProjectsAssociationExtension2
     def find_least_recent
       order("id ASC").first
@@ -17,12 +30,18 @@ class Developer < ActiveRecord::Base
     end
   end
 
+  def self.target
+    :__target__ # Used by delegation_test.rb
+  end
+
   belongs_to :mentor
   belongs_to :strict_loading_mentor, strict_loading: true, foreign_key: :mentor_id, class_name: "Mentor"
+  belongs_to :strict_loading_off_mentor, strict_loading: false, foreign_key: :mentor_id, class_name: "Mentor"
 
   accepts_nested_attributes_for :projects
 
   has_and_belongs_to_many :shared_computers, class_name: "Computer"
+  has_many :computers, foreign_key: :developer
 
   has_and_belongs_to_many :projects_extended_by_name,
       -> { extending(ProjectsAssociationExtension) },
@@ -59,6 +78,7 @@ class Developer < ActiveRecord::Base
                           class_name: "SpecialProject"
 
   has_many :audit_logs
+  has_many :required_audit_logs, class_name: "AuditLogRequired"
   has_many :strict_loading_audit_logs, -> { strict_loading }, class_name: "AuditLog"
   has_many :strict_loading_opt_audit_logs, strict_loading: true, class_name: "AuditLog"
   has_many :contracts
@@ -100,6 +120,11 @@ end
 class SubDeveloper < Developer
 end
 
+class SpecialDeveloper < ActiveRecord::Base
+  self.table_name = "developers"
+  has_many :special_contracts, foreign_key: "developer_id"
+end
+
 class SymbolIgnoredDeveloper < ActiveRecord::Base
   self.table_name = "developers"
   self.ignored_columns = [:first_name, :last_name]
@@ -110,6 +135,13 @@ end
 class AuditLog < ActiveRecord::Base
   belongs_to :developer, validate: true
   belongs_to :unvalidated_developer, class_name: "Developer"
+
+  self.attributes_for_inspect = [:id, :message]
+end
+
+class AuditLogRequired < ActiveRecord::Base
+  self.table_name = "audit_logs"
+  belongs_to :developer, required: true
 end
 
 class DeveloperWithBeforeDestroyRaise < ActiveRecord::Base
@@ -125,6 +157,35 @@ end
 class DeveloperWithSelect < ActiveRecord::Base
   self.table_name = "developers"
   default_scope { select("name") }
+end
+
+class DeveloperwithDefaultMentorScopeNot < ActiveRecord::Base
+  self.table_name = "developers"
+  default_scope -> { where(mentor_id: 1) }
+end
+
+class DeveloperWithDefaultMentorScopeAllQueries < ActiveRecord::Base
+  self.table_name = "developers"
+  default_scope -> { where(mentor_id: 1) }, all_queries: true
+end
+
+class DeveloperWithDefaultNilableFirmScopeAllQueries < ActiveRecord::Base
+  self.table_name = "developers"
+  firm_id = nil # Could be something like Current.firm_id
+  default_scope -> { where(firm_id: firm_id) if firm_id }, all_queries: true
+end
+
+module MentorDefaultScopeNotAllQueries
+  extend ActiveSupport::Concern
+
+  included { default_scope { where(mentor_id: 1) } }
+end
+
+class DeveloperWithIncludedMentorDefaultScopeNotAllQueriesAndDefaultScopeFirmWithAllQueries < ActiveRecord::Base
+  include MentorDefaultScopeNotAllQueries
+  self.table_name = "developers"
+  firm_id = 10 # Could be something like Current.firm_id
+  default_scope -> { where(firm_id: firm_id) if firm_id }, all_queries: true
 end
 
 class DeveloperWithIncludes < ActiveRecord::Base
@@ -143,6 +204,8 @@ class DeveloperFilteredOnJoins < ActiveRecord::Base
 end
 
 class DeveloperOrderedBySalary < ActiveRecord::Base
+  include Developer::TimestampAliases
+
   self.table_name = "developers"
   default_scope { order("salary DESC") }
 
@@ -166,7 +229,7 @@ end
 
 class CallableDeveloperCalledDavid < ActiveRecord::Base
   self.table_name = "developers"
-  default_scope OpenStruct.new(call: where(name: "David"))
+  default_scope Struct.new(:call).new(where(name: "David"))
 end
 
 class ClassMethodDeveloperCalledDavid < ActiveRecord::Base
@@ -193,6 +256,8 @@ class LazyBlockReferencingScopeDeveloperCalledDavid < ActiveRecord::Base
 end
 
 class DeveloperCalledJamis < ActiveRecord::Base
+  include Developer::TimestampAliases
+
   self.table_name = "developers"
 
   default_scope { where(name: "Jamis") }
@@ -267,7 +332,7 @@ class EagerDeveloperWithCallableDefaultScope < ActiveRecord::Base
   self.table_name = "developers"
   has_and_belongs_to_many :projects, -> { order("projects.id") }, foreign_key: "developer_id", join_table: "developers_projects"
 
-  default_scope OpenStruct.new(call: includes(:projects))
+  default_scope Struct.new(:call).new(includes(:projects))
 end
 
 class ThreadsafeDeveloper < ActiveRecord::Base
@@ -280,6 +345,8 @@ class ThreadsafeDeveloper < ActiveRecord::Base
 end
 
 class CachedDeveloper < ActiveRecord::Base
+  include Developer::TimestampAliases
+
   self.table_name = "developers"
   self.cache_timestamp_format = :number
 end
@@ -302,4 +369,14 @@ class AttributedDeveloper < ActiveRecord::Base
   attribute :name, DeveloperName.new
 
   self.ignored_columns += ["name"]
+end
+
+class ColumnNamesCachedDeveloper < ActiveRecord::Base
+  self.table_name = "developers"
+  self.ignored_columns += ["name"] if column_names.include?("name")
+end
+
+class AuditRequiredDeveloper < ActiveRecord::Base
+  self.table_name = "developers"
+  has_many :required_audit_logs, class_name: "AuditLogRequired"
 end

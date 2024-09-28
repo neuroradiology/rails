@@ -29,24 +29,38 @@ module ActiveRecord
       ], result.to_a
     end
 
-    test "to_hash (deprecated) returns row_hashes" do
-      assert_deprecated do
-        assert_equal [
-          { "col_1" => "row 1 col 1", "col_2" => "row 1 col 2" },
-          { "col_1" => "row 2 col 1", "col_2" => "row 2 col 2" },
-          { "col_1" => "row 3 col 1", "col_2" => "row 3 col 2" },
-        ], result.to_hash
-      end
-    end
-
     test "first returns first row as a hash" do
       assert_equal(
         { "col_1" => "row 1 col 1", "col_2" => "row 1 col 2" }, result.first)
+      assert_equal [
+        { "col_1" => "row 1 col 1", "col_2" => "row 1 col 2" },
+      ], result.first(1)
+      assert_equal [
+        { "col_1" => "row 1 col 1", "col_2" => "row 1 col 2" },
+        { "col_1" => "row 2 col 1", "col_2" => "row 2 col 2" },
+      ], result.first(2)
+      assert_equal [
+        { "col_1" => "row 1 col 1", "col_2" => "row 1 col 2" },
+        { "col_1" => "row 2 col 1", "col_2" => "row 2 col 2" },
+        { "col_1" => "row 3 col 1", "col_2" => "row 3 col 2" },
+      ], result.first(3)
     end
 
     test "last returns last row as a hash" do
       assert_equal(
         { "col_1" => "row 3 col 1", "col_2" => "row 3 col 2" }, result.last)
+      assert_equal [
+        { "col_1" => "row 3 col 1", "col_2" => "row 3 col 2" },
+      ], result.last(1)
+      assert_equal [
+        { "col_1" => "row 2 col 1", "col_2" => "row 2 col 2" },
+        { "col_1" => "row 3 col 1", "col_2" => "row 3 col 2" },
+      ], result.last(2)
+      assert_equal [
+        { "col_1" => "row 1 col 1", "col_2" => "row 1 col 2" },
+        { "col_1" => "row 2 col 1", "col_2" => "row 2 col 2" },
+        { "col_1" => "row 3 col 1", "col_2" => "row 3 col 2" },
+      ], result.last(3)
     end
 
     test "each with block returns row hashes" do
@@ -100,6 +114,20 @@ module ActiveRecord
       result = Result.new(columns, values, types)
 
       assert_equal [[1.1, 2.2], [3.3, 4.4]], result.cast_values("col1" => Type::Float.new)
+    end
+
+    test "each when two columns have the same name" do
+      result = Result.new(["foo", "foo"], [
+        ["col 1", "col 2"],
+        ["col 1", "col 2"],
+        ["col 1", "col 2"],
+      ])
+
+      assert_equal 2, result.columns.size
+      result.each do |row|
+        assert_equal 1, row.size
+        assert_equal "col 2", row["foo"]
+      end
     end
   end
 end

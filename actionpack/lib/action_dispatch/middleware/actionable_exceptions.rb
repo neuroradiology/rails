@@ -1,7 +1,8 @@
 # frozen_string_literal: true
 
-require "erb"
-require "action_dispatch/http/request"
+# :markup: markdown
+
+require "uri"
 require "active_support/actionable_error"
 
 module ActionDispatch
@@ -23,16 +24,22 @@ module ActionDispatch
 
     private
       def actionable_request?(request)
-        request.show_exceptions? && request.post? && request.path == endpoint
+        request.get_header("action_dispatch.show_detailed_exceptions") && request.post? && request.path == endpoint
       end
 
       def redirect_to(location)
-        body = "<html><body>You are being <a href=\"#{ERB::Util.unwrapped_html_escape(location)}\">redirected</a>.</body></html>"
+        uri = URI.parse location
+
+        if uri.relative? || uri.scheme == "http" || uri.scheme == "https"
+          body = ""
+        else
+          return [400, { Rack::CONTENT_TYPE => "text/plain; charset=utf-8" }, ["Invalid redirection URI"]]
+        end
 
         [302, {
-          "Content-Type" => "text/html; charset=#{Response.default_charset}",
-          "Content-Length" => body.bytesize.to_s,
-          "Location" => location,
+          Rack::CONTENT_TYPE => "text/html; charset=#{Response.default_charset}",
+          Rack::CONTENT_LENGTH => body.bytesize.to_s,
+          ActionDispatch::Constants::LOCATION => location,
         }, [body]]
       end
   end

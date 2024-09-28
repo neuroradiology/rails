@@ -1,10 +1,12 @@
 # frozen_string_literal: true
 
+require "action_view/helpers/tag_helper"
+
 module ActionView
-  # = Action View Debug Helper
-  #
-  # Provides a set of methods for making it easier to debug Rails objects.
-  module Helpers #:nodoc:
+  module Helpers # :nodoc:
+    # = Action View Debug \Helpers
+    #
+    # Provides a set of methods for making it easier to debug \Rails objects.
     module DebugHelper
       include TagHelper
 

@@ -1,7 +1,9 @@
 # frozen_string_literal: true
 
+# :markup: markdown
+
 module AbstractController
-  module AssetPaths #:nodoc:
+  module AssetPaths # :nodoc:
     extend ActiveSupport::Concern
 
     included do

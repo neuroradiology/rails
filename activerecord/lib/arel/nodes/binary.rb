@@ -29,18 +29,91 @@ module Arel # :nodoc: all
       alias :== :eql?
     end
 
+    module FetchAttribute
+      def fetch_attribute
+        if left.is_a?(Arel::Attributes::Attribute)
+          yield left
+        elsif right.is_a?(Arel::Attributes::Attribute)
+          yield right
+        end
+      end
+    end
+
+    class As < Binary
+      def to_cte
+        Arel::Nodes::Cte.new(left.name, right)
+      end
+    end
+
+    class Between < Binary; include FetchAttribute; end
+
+    class GreaterThan < Binary
+      include FetchAttribute
+
+      def invert
+        Arel::Nodes::LessThanOrEqual.new(left, right)
+      end
+    end
+
+    class GreaterThanOrEqual < Binary
+      include FetchAttribute
+
+      def invert
+        Arel::Nodes::LessThan.new(left, right)
+      end
+    end
+
+    class LessThan < Binary
+      include FetchAttribute
+
+      def invert
+        Arel::Nodes::GreaterThanOrEqual.new(left, right)
+      end
+    end
+
+    class LessThanOrEqual < Binary
+      include FetchAttribute
+
+      def invert
+        Arel::Nodes::GreaterThan.new(left, right)
+      end
+    end
+
+    class IsDistinctFrom < Binary
+      include FetchAttribute
+
+      def invert
+        Arel::Nodes::IsNotDistinctFrom.new(left, right)
+      end
+    end
+
+    class IsNotDistinctFrom < Binary
+      include FetchAttribute
+
+      def invert
+        Arel::Nodes::IsDistinctFrom.new(left, right)
+      end
+    end
+
+    class NotEqual < Binary
+      include FetchAttribute
+
+      def invert
+        Arel::Nodes::Equality.new(left, right)
+      end
+    end
+
+    class NotIn < Binary
+      include FetchAttribute
+
+      def invert
+        Arel::Nodes::In.new(left, right)
+      end
+    end
+
     %w{
-      As
       Assignment
-      Between
-      GreaterThan
-      GreaterThanOrEqual
       Join
-      LessThan
-      LessThanOrEqual
-      NotEqual
-      NotIn
-      Or
       Union
       UnionAll
       Intersect

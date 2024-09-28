@@ -1,11 +1,7 @@
 # frozen_string_literal: true
 
-require "active_model/forbidden_attributes_protection"
-
 module ActiveRecord
   module AttributeAssignment
-    include ActiveModel::AttributeAssignment
-
     private
       def _assign_attributes(attributes)
         multi_parameter_attributes = nested_parameter_attributes = nil
@@ -46,7 +42,7 @@ module ActiveRecord
       def execute_callstack_for_multiparameter_attributes(callstack)
         errors = []
         callstack.each do |name, values_with_empty_parameters|
-          if values_with_empty_parameters.each_value.all?(&:nil?)
+          if values_with_empty_parameters.each_value.all?(NilClass)
             values = nil
           else
             values = values_with_empty_parameters

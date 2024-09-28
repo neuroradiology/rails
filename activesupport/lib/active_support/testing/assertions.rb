@@ -7,9 +7,9 @@ module ActiveSupport
     module Assertions
       UNTRACKED = Object.new # :nodoc:
 
-      # Asserts that an expression is not truthy. Passes if <tt>object</tt> is
-      # +nil+ or +false+. "Truthy" means "considered true in a conditional"
-      # like <tt>if foo</tt>.
+      # Asserts that an expression is not truthy. Passes if +object+ is +nil+ or
+      # +false+. "Truthy" means "considered true in a conditional" like <tt>if
+      # foo</tt>.
       #
       #   assert_not nil    # => true
       #   assert_not false  # => true
@@ -19,9 +19,24 @@ module ActiveSupport
       #
       #   assert_not foo, 'foo should be false'
       def assert_not(object, message = nil)
-        message ||= "Expected #{mu_pp(object)} to be nil or false"
+        message ||= -> { "Expected #{mu_pp(object)} to be nil or false" }
         assert !object, message
       end
+
+      # Asserts that a block raises one of +exp+. This is an enhancement of the
+      # standard Minitest assertion method with the ability to test error
+      # messages.
+      #
+      #   assert_raises(ArgumentError, match: /incorrect param/i) do
+      #     perform_service(param: 'exception')
+      #   end
+      #
+      def assert_raises(*exp, match: nil, &block)
+        error = super(*exp, &block)
+        assert_match(match, error.message) if match
+        error
+      end
+      alias :assert_raise :assert_raises
 
       # Assertion that the block should not raise an exception.
       #
@@ -31,7 +46,7 @@ module ActiveSupport
       #     perform_service(param: 'no_exception')
       #   end
       def assert_nothing_raised
-        yield
+        yield.tap { assert(true) }
       rescue => error
         raise Minitest::UnexpectedError.new(error)
       end
@@ -50,7 +65,7 @@ module ActiveSupport
       #   end
       #
       # An arbitrary positive or negative difference can be specified.
-      # The default is <tt>1</tt>.
+      # The default is +1+.
       #
       #   assert_difference 'Article.count', -1 do
       #     post :delete, params: { id: ... }
@@ -99,12 +114,17 @@ module ActiveSupport
         }
         before = exps.map(&:call)
 
-        retval = assert_nothing_raised(&block)
+        retval = _assert_nothing_raised_or_warn("assert_difference", &block)
 
         expressions.zip(exps, before) do |(code, diff), exp, before_value|
-          error  = "#{code.inspect} didn't change by #{diff}"
-          error  = "#{message}.\n#{error}" if message
-          assert_equal(before_value + diff, exp.call, error)
+          actual = exp.call
+          rich_message = -> do
+            code_string = code.respond_to?(:call) ? _callable_to_source_string(code) : code
+            error = "`#{code_string}` didn't change by #{diff}, but by #{actual - before_value}"
+            error = "#{message}.\n#{error}" if message
+            error
+          end
+          assert_equal(before_value + diff, actual, rich_message)
         end
 
         retval
@@ -159,7 +179,7 @@ module ActiveSupport
       #     @object = 42
       #   end
       #
-      # The keyword arguments :from and :to can be given to specify the
+      # The keyword arguments +:from+ and +:to+ can be given to specify the
       # expected initial value and the expected value after the block was
       # executed.
       #
@@ -176,25 +196,35 @@ module ActiveSupport
         exp = expression.respond_to?(:call) ? expression : -> { eval(expression.to_s, block.binding) }
 
         before = exp.call
-        retval = assert_nothing_raised(&block)
+        retval = _assert_nothing_raised_or_warn("assert_changes", &block)
 
         unless from == UNTRACKED
-          error = "Expected change from #{from.inspect}"
-          error = "#{message}.\n#{error}" if message
-          assert from === before, error
+          rich_message = -> do
+            error = "Expected change from #{from.inspect}, got #{before.inspect}"
+            error = "#{message}.\n#{error}" if message
+            error
+          end
+          assert from === before, rich_message
         end
 
         after = exp.call
 
-        error = "#{expression.inspect} didn't change"
-        error = "#{error}. It was already #{to}" if before == to
-        error = "#{message}.\n#{error}" if message
-        assert_not_equal before, after, error
+        rich_message = -> do
+          code_string = expression.respond_to?(:call) ? _callable_to_source_string(expression) : expression
+          error = "`#{code_string}` didn't change"
+          error = "#{error}. It was already #{to.inspect}" if before == to
+          error = "#{message}.\n#{error}" if message
+          error
+        end
+        refute_equal before, after, rich_message
 
         unless to == UNTRACKED
-          error = "Expected change to #{to}\n"
-          error = "#{message}.\n#{error}" if message
-          assert to === after, error
+          rich_message = -> do
+            error = "Expected change to #{to.inspect}, got #{after.inspect}\n"
+            error = "#{message}.\n#{error}" if message
+            error
+          end
+          assert to === after, rich_message
         end
 
         retval
@@ -207,29 +237,96 @@ module ActiveSupport
       #     post :create, params: { status: { ok: true } }
       #   end
       #
+      # Provide the optional keyword argument +:from+ to specify the expected
+      # initial value.
+      #
+      #   assert_no_changes -> { Status.all_good? }, from: true do
+      #     post :create, params: { status: { ok: true } }
+      #   end
+      #
       # An error message can be specified.
       #
       #   assert_no_changes -> { Status.all_good? }, 'Expected the status to be good' do
       #     post :create, params: { status: { ok: false } }
       #   end
-      def assert_no_changes(expression, message = nil, &block)
+      def assert_no_changes(expression, message = nil, from: UNTRACKED, &block)
         exp = expression.respond_to?(:call) ? expression : -> { eval(expression.to_s, block.binding) }
 
         before = exp.call
-        retval = assert_nothing_raised(&block)
+        retval = _assert_nothing_raised_or_warn("assert_no_changes", &block)
+
+        unless from == UNTRACKED
+          rich_message = -> do
+            error = "Expected initial value of #{from.inspect}, got #{before.inspect}"
+            error = "#{message}.\n#{error}" if message
+            error
+          end
+          assert from === before, rich_message
+        end
+
         after = exp.call
 
-        error = "#{expression.inspect} changed"
-        error = "#{message}.\n#{error}" if message
+        rich_message = -> do
+          code_string = expression.respond_to?(:call) ? _callable_to_source_string(expression) : expression
+          error = "`#{code_string}` changed"
+          error = "#{message}.\n#{error}" if message
+          error
+        end
 
         if before.nil?
-          assert_nil after, error
+          assert_nil after, rich_message
         else
-          assert_equal before, after, error
+          assert_equal before, after, rich_message
         end
 
         retval
       end
+
+      private
+        def _assert_nothing_raised_or_warn(assertion, &block)
+          assert_nothing_raised(&block)
+        rescue Minitest::UnexpectedError => e
+          if tagged_logger && tagged_logger.warn?
+            warning = <<~MSG
+              #{self.class} - #{name}: #{e.error.class} raised.
+              If you expected this exception, use `assert_raises` as near to the code that raises as possible.
+              Other block based assertions (e.g. `#{assertion}`) can be used, as long as `assert_raises` is inside their block.
+            MSG
+            tagged_logger.warn warning
+          end
+
+          raise
+        end
+
+        def _callable_to_source_string(callable)
+          if defined?(RubyVM::AbstractSyntaxTree) && callable.is_a?(Proc)
+            ast = begin
+              RubyVM::AbstractSyntaxTree.of(callable, keep_script_lines: true)
+            rescue SystemCallError
+              # Failed to get the source somehow
+              return callable
+            end
+            return callable unless ast
+
+            source = ast.source
+            source.strip!
+
+            # We ignore procs defined with do/end as they are likely multi-line anyway.
+            if source.start_with?("{")
+              source.delete_suffix!("}")
+              source.delete_prefix!("{")
+              source.strip!
+              # It won't read nice if the callable contains multiple
+              # lines, and it should be a rare occurence anyway.
+              # Same if it takes arguments.
+              if !source.include?("\n") && !source.start_with?("|")
+                return source
+              end
+            end
+          end
+
+          callable
+        end
     end
   end
 end

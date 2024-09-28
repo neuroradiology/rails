@@ -5,16 +5,16 @@ require "active_support/core_ext/object/duplicable"
 module ActiveModel
   class Attribute # :nodoc:
     class << self
-      def from_database(name, value, type)
-        FromDatabase.new(name, value, type)
+      def from_database(name, value_before_type_cast, type, value = nil)
+        FromDatabase.new(name, value_before_type_cast, type, nil, value)
       end
 
-      def from_user(name, value, type, original_attribute = nil)
-        FromUser.new(name, value, type, original_attribute)
+      def from_user(name, value_before_type_cast, type, original_attribute = nil)
+        FromUser.new(name, value_before_type_cast, type, original_attribute)
       end
 
-      def with_cast_value(name, value, type)
-        WithCastValue.new(name, value, type)
+      def with_cast_value(name, value_before_type_cast, type)
+        WithCastValue.new(name, value_before_type_cast, type)
       end
 
       def null(name)
@@ -30,11 +30,12 @@ module ActiveModel
 
     # This method should not be called directly.
     # Use #from_database or #from_user
-    def initialize(name, value_before_type_cast, type, original_attribute = nil)
+    def initialize(name, value_before_type_cast, type, original_attribute = nil, value = nil)
       @name = name
       @value_before_type_cast = value_before_type_cast
       @type = type
       @original_attribute = original_attribute
+      @value = value unless value.nil?
     end
 
     def value
@@ -52,7 +53,14 @@ module ActiveModel
     end
 
     def value_for_database
-      type.serialize(value)
+      if !defined?(@value_for_database) || type.changed_in_place?(@value_for_database, value)
+        @value_for_database = _value_for_database
+      end
+      @value_for_database
+    end
+
+    def serializable?(&block)
+      type.serializable?(value, &block)
     end
 
     def changed?
@@ -132,27 +140,30 @@ module ActiveModel
       coder["value"] = value if defined?(@value)
     end
 
-    protected
-      def original_value_for_database
-        if assigned?
-          original_attribute.original_value_for_database
-        else
-          _original_value_for_database
-        end
+    def original_value_for_database
+      if assigned?
+        original_attribute.original_value_for_database
+      else
+        _original_value_for_database
       end
+    end
 
     private
       attr_reader :original_attribute
       alias :assigned? :original_attribute
 
       def initialize_dup(other)
-        if defined?(@value) && @value.duplicable?
+        if @value&.duplicable?
           @value = @value.dup
         end
       end
 
       def changed_from_assignment?
         assigned? && type.changed?(original_value, value, value_before_type_cast)
+      end
+
+      def _value_for_database
+        type.serialize(value)
       end
 
       def _original_value_for_database
@@ -164,9 +175,23 @@ module ActiveModel
           type.deserialize(value)
         end
 
-        def _original_value_for_database
-          value_before_type_cast
+        def forgetting_assignment
+          # If this attribute was not persisted (with a `value_for_database`
+          # that might differ from `value_before_type_cast`) and `value` has not
+          # changed in place, we can use the existing `value_before_type_cast`
+          # to avoid deserialize / cast / serialize calls from computing the new
+          # attribute's `value_before_type_cast`.
+          if !defined?(@value_for_database) && !changed_in_place?
+            with_value_from_database(value_before_type_cast)
+          else
+            super
+          end
         end
+
+        private
+          def _original_value_for_database
+            value_before_type_cast
+          end
       end
 
       class FromUser < Attribute # :nodoc:
@@ -177,6 +202,11 @@ module ActiveModel
         def came_from_user?
           !type.value_constructed_by_mass_assignment?(value_before_type_cast)
         end
+
+        private
+          def _value_for_database
+            Type::SerializeCastValue.serialize(type, value)
+          end
       end
 
       class WithCastValue < Attribute # :nodoc:

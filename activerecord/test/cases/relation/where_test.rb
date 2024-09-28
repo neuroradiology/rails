@@ -5,6 +5,8 @@ require "models/author"
 require "models/binary"
 require "models/cake_designer"
 require "models/car"
+require "models/category"
+require "models/categorization"
 require "models/chef"
 require "models/post"
 require "models/comment"
@@ -14,22 +16,36 @@ require "models/price_estimate"
 require "models/topic"
 require "models/treasure"
 require "models/vertex"
+require "models/cpk"
 require "support/stubs/strong_parameters"
 
 module ActiveRecord
   class WhereTest < ActiveRecord::TestCase
-    fixtures :posts, :comments, :edges, :authors, :author_addresses, :binaries, :essays, :cars, :treasures, :price_estimates, :topics
-
-    def test_in_clause_is_correctly_sliced
-      assert_called(Author.connection, :in_clause_length, returns: 1) do
-        david = authors(:david)
-        assert_equal [david], Author.where(name: "David", id: [1, 2])
-      end
-    end
+    fixtures :authors, :author_addresses, :categories, :categorizations, :cars, :treasures, :price_estimates,
+      :binaries, :edges, :essays, :posts, :comments, :topics
 
     def test_type_casting_nested_joins
       comment = comments(:eager_other_comment1)
       assert_equal [comment], Comment.joins(post: :author).where(authors: { id: "2-foo" })
+    end
+
+    def test_where_with_through_association
+      assert_equal [authors(:david)], Author.joins(:comments).where(comments: comments(:greetings))
+      assert_equal [authors(:bob)], Author.joins(:categories).where(categories: categories(:technology))
+    end
+
+    def test_type_cast_is_not_evaluated_at_relation_build_time
+      posts = nil
+
+      assert_not_called_on_instance_of(Type::Value, :cast) do
+        posts = Post.where(id: "1-foo")
+      end
+      assert_equal [posts(:welcome)], posts.to_a
+
+      assert_not_called_on_instance_of(Type::Value, :cast) do
+        posts = Post.where(id: ["1-foo", "bar"])
+      end
+      assert_equal [posts(:welcome)], posts.to_a
     end
 
     def test_where_copies_bind_params
@@ -74,6 +90,63 @@ module ActiveRecord
 
     def test_rewhere_on_root
       assert_equal posts(:welcome), Post.rewhere(title: "Welcome to the weblog").first
+    end
+
+    def test_where_with_tuple_syntax
+      first_topic = topics(:first)
+      third_topic = topics(:third)
+
+      key = [:title, :author_name]
+
+      conditions = [
+        [first_topic.title, first_topic.author_name],
+        [third_topic.title, third_topic.author_name],
+      ]
+
+      assert_equal [first_topic], Topic.where([:id] => [[first_topic.id]])
+      assert_equal [first_topic, third_topic].sort, Topic.where(key => conditions).sort
+    end
+
+    def test_where_with_tuple_syntax_on_composite_models
+      book_one = Cpk::Book.create!(id: [1, 2])
+      book_two = Cpk::Book.create!(id: [3, 4])
+
+      assert_equal [book_one], Cpk::Book.where([:author_id, :id] => [[1, 2]])
+      assert_equal [book_one, book_two].sort, Cpk::Book.where(Cpk::Book.primary_key => [[1, 2], [3, 4]]).sort
+      assert_empty Cpk::Book.where([:author_id, :id] => [[1, 4], [3, 2]])
+    end
+
+    def test_where_with_tuple_syntax_with_incorrect_arity
+      error = assert_raise ArgumentError do
+        Cpk::Book.where([:one, :two, :three] => [1, 2, 3])
+      end
+
+      assert_match(/Expected corresponding value for.*to be an Array/, error.message)
+
+      error = assert_raise ArgumentError do
+        Cpk::Book.where([:one, :two] => 1)
+      end
+
+      assert_match(/Expected corresponding value for.*to be an Array/, error.message)
+    end
+
+    def test_where_with_tuple_syntax_and_regular_syntax_combined
+      book_one = Cpk::Book.create!(id: [1, 2], title: "The Alchemist")
+      book_two = Cpk::Book.create!(id: [3, 4], title: "The Alchemist")
+
+      assert_equal [book_one, book_two].sort, Cpk::Book.where(title: "The Alchemist").sort
+      assert_equal [book_one, book_two].sort, Cpk::Book.where(title: "The Alchemist", [:author_id, :id] => [[1, 2], [3, 4]]).sort
+      assert_equal [book_two], Cpk::Book.where(title: "The Alchemist", [:author_id, :id] => [[3, 4]])
+    end
+
+    def test_with_tuple_syntax_and_large_values_list
+      # sqlite3 raises "Expression tree is too large (maximum depth 1000)"
+      skip if current_adapter?(:SQLite3Adapter)
+
+      assert_nothing_raised do
+        ids = [[1, 2]] * 1500
+        Cpk::Book.where([:author_id, :id] => ids).to_sql
+      end
     end
 
     def test_belongs_to_shallow_where
@@ -147,11 +220,7 @@ module ActiveRecord
       all = [treasures(:diamond), sapphire, cars(:honda), sapphire]
       assert_equal all, PriceEstimate.all.sort_by(&:id).map(&:estimate_of)
 
-      actual = PriceEstimate.where.yield_self do |where_chain|
-        where_chain.stub(:not_behaves_as_nor?, false) do
-          where_chain.not(estimate_of_type: sapphire.class.polymorphic_name, estimate_of_id: sapphire.id)
-        end
-      end
+      actual = PriceEstimate.where.not(estimate_of_type: sapphire.class.polymorphic_name, estimate_of_id: sapphire.id)
       only = PriceEstimate.where(estimate_of_type: sapphire.class.polymorphic_name, estimate_of_id: sapphire.id)
 
       expected = all - [sapphire]
@@ -159,43 +228,15 @@ module ActiveRecord
       assert_equal all - expected, only.sort_by(&:id).map(&:estimate_of)
     end
 
-    def test_where_not_polymorphic_id_and_type_as_nor_is_deprecated
+    def test_where_not_association_as_nand
       sapphire = treasures(:sapphire)
-
-      all = [treasures(:diamond), sapphire, cars(:honda), sapphire]
-      assert_equal all, PriceEstimate.all.sort_by(&:id).map(&:estimate_of)
-
-      message = <<~MSG.squish
-        NOT conditions will no longer behave as NOR in Rails 6.1.
-        To continue using NOR conditions, NOT each condition individually
-        (`.where.not(:estimate_of_type => ...).where.not(:estimate_of_id => ...)`).
-      MSG
-      actual = assert_deprecated(message) do
-        PriceEstimate.where.not(estimate_of_type: sapphire.class.polymorphic_name, estimate_of_id: sapphire.id)
-      end
-      only = PriceEstimate.where(estimate_of_type: sapphire.class.polymorphic_name, estimate_of_id: sapphire.id)
-
-      expected = all - [sapphire]
-      # NOT (estimate_of_type = 'Treasure' OR estimate_of_id = sapphire.id) matches only `cars(:honda)` unfortunately.
-      assert_not_equal expected, actual.sort_by(&:id).map(&:estimate_of)
-      assert_equal all - expected, only.sort_by(&:id).map(&:estimate_of)
-    end
-
-    def test_where_not_association_as_nor_is_deprecated
       treasure = Treasure.create!(name: "my_treasure")
       PriceEstimate.create!(estimate_of: treasure, price: 2, currency: "USD")
-      PriceEstimate.create!(estimate_of: treasure, price: 2, currency: "EUR")
 
-      message = <<~MSG.squish
-        NOT conditions will no longer behave as NOR in Rails 6.1.
-        To continue using NOR conditions, NOT each condition individually
-        (`.where.not(:price_estimates => { :price => ... }).where.not(:price_estimates => { :currency => ... })`).
-      MSG
-      assert_deprecated(message) do
-        result = Treasure.joins(:price_estimates).where.not(price_estimates: { price: 2, currency: "USD" })
+      expected = [treasures(:diamond), sapphire, sapphire]
+      actual = Treasure.joins(:price_estimates).where.not(price_estimates: { price: 2, currency: "USD" })
 
-        assert_predicate result, :empty?
-      end
+      assert_equal expected.sort_by(&:id), actual.sort_by(&:id)
     end
 
     def test_polymorphic_nested_array_where
@@ -278,8 +319,8 @@ module ActiveRecord
           model.is_a?(klass)
         end
 
-        def method_missing(method, *args, &block)
-          model.send(method, *args, &block)
+        def method_missing(...)
+          model.send(...)
         end
       end
 
@@ -349,6 +390,11 @@ module ActiveRecord
       assert_equal 0, count
     end
 
+    def test_where_with_rational_for_string_column
+      count = Post.where(title: Rational(0)).count
+      assert_equal 0, count
+    end
+
     def test_where_with_duration_for_string_column
       count = Post.where(title: 0.seconds).count
       assert_equal 0, count
@@ -357,6 +403,12 @@ module ActiveRecord
     def test_where_with_integer_for_binary_column
       count = Binary.where(data: 0).count
       assert_equal 0, count
+    end
+
+    def test_where_with_emoji_for_binary_column
+      Binary.create!(data: "🥦")
+      assert Binary.where(data: ["🥦", "🍦"]).to_sql.include?("f09fa5a6")
+      assert Binary.where(data: ["🥦", "🍦"]).to_sql.include?("f09f8da6")
     end
 
     def test_where_on_association_with_custom_primary_key
@@ -376,7 +428,7 @@ module ActiveRecord
     def test_where_on_association_with_relation_performs_subselect_not_two_queries
       author = authors(:david)
 
-      assert_queries(1) do
+      assert_queries_count(1) do
         Essay.where(writer: Author.where(id: author.id)).to_a
       end
     end
@@ -412,6 +464,11 @@ module ActiveRecord
       assert_equal essays(:david_modest_proposal), essay
     end
 
+    def test_where_on_association_with_collection_polymorphic_relation
+      treasures = Treasure.where(name: ["diamond", "emerald"], price_estimates: PriceEstimate.all)
+      assert_equal [treasures(:diamond)], treasures
+    end
+
     def test_where_with_strong_parameters
       author = authors(:david)
       params = ProtectedParams.new(name: author.name)
@@ -431,6 +488,19 @@ module ActiveRecord
 
     def test_where_with_unsupported_arguments
       assert_raises(ArgumentError) { Author.where(42) }
+    end
+
+    def test_invert_where
+      author = authors(:david)
+      posts = author.posts.where.not(id: 1)
+
+      assert_equal 1, posts.invert_where.first.id
+    end
+
+    def test_nested_conditional_on_enum
+      post = Post.first
+      Comment.create!(label: :default, post: post, body: "Nice weather today")
+      assert_equal [post], Post.joins(:comments).where(comments: { label: :default, body: "Nice weather today" }).to_a
     end
   end
 end

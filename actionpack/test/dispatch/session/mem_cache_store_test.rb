@@ -40,7 +40,7 @@ class MemCacheStoreTest < ActionDispatch::IntegrationTest
     require "dalli"
     servers = ENV["MEMCACHE_SERVERS"] || "localhost:11211"
     ss = Dalli::Client.new(servers).stats
-    raise Dalli::DalliError unless ss[servers]
+    raise Dalli::DalliError unless ss[servers] || ss[servers + ":11211"]
 
     def test_setting_and_getting_session_value
       with_test_route_set do
@@ -71,7 +71,7 @@ class MemCacheStoreTest < ActionDispatch::IntegrationTest
         get "/set_session_value"
         assert_response :success
         assert cookies["_session_id"]
-        session_cookie = cookies.send(:hash_for)["_session_id"]
+        session_cookie = cookies.get_cookie("_session_id")
 
         get "/call_reset_session"
         assert_response :success
@@ -187,19 +187,22 @@ class MemCacheStoreTest < ActionDispatch::IntegrationTest
   end
 
   private
+    def app
+      @app ||= self.class.build_app do |middleware|
+        middleware.use ActionDispatch::Session::MemCacheStore,
+          key: "_session_id", namespace: "mem_cache_store_test:#{SecureRandom.hex(10)}",
+          memcache_server: ENV["MEMCACHE_SERVERS"] || "localhost:11211",
+          socket_timeout: 60
+        middleware.delete ActionDispatch::ShowExceptions
+      end
+    end
+
     def with_test_route_set
       with_routing do |set|
         set.draw do
-          ActiveSupport::Deprecation.silence do
+          ActionDispatch.deprecator.silence do
             get ":action", to: ::MemCacheStoreTest::TestController
           end
-        end
-
-        @app = self.class.build_app(set) do |middleware|
-          middleware.use ActionDispatch::Session::MemCacheStore,
-            key: "_session_id", namespace: "mem_cache_store_test:#{SecureRandom.hex(10)}",
-            memcache_server: ENV["MEMCACHE_SERVERS"] || "localhost:11211"
-          middleware.delete ActionDispatch::ShowExceptions
         end
 
         yield

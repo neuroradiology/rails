@@ -56,4 +56,26 @@ class DeepDupTest < ActiveSupport::TestCase
     dup = hash.deep_dup
     assert_equal 1, dup.keys.length
   end
+
+  def test_deep_dup_with_mutable_frozen_key
+    key = { array: [] }.freeze
+    hash = { key => :value }
+
+    dup = hash.deep_dup
+    dup.transform_keys { |k| k[:array] << :array_element }
+
+    assert_not_equal hash.keys, dup.keys
+  end
+
+  def test_named_modules_arent_duped
+    hash = { class: Object, module: Kernel }
+    assert_equal hash, hash.deep_dup
+  end
+
+  def test_anonymous_modules_are_duped
+    hash = { class: Class.new, module: Module.new }
+    duped_hash = hash.deep_dup
+    assert_not_equal hash[:class], duped_hash[:class]
+    assert_not_equal hash[:module], duped_hash[:module]
+  end
 end

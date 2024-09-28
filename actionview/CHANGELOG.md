@@ -1,79 +1,27 @@
-*   `ActionView::Helpers::TranslationHelper#translate` returns nil when
-    passed `default: nil` without a translation matching `I18n#translate`.
+## Rails 8.0.0.beta1 (September 26, 2024) ##
 
-    *Stefan Wrobel*
+*   Enable DependencyTracker to evaluate renders with trailing interpolation.
 
-*   `OptimizedFileSystemResolver` prefers template details in order of locale,
-    formats, variants, handlers.
-
-    *Iago Pimenta*
-
-*   Added `class_names` helper to create a CSS class value with conditional classes.
-
-    *Joel Hawksley*, *Aaron Patterson*
-
-*   Add support for conditional values to TagBuilder.
-
-    *Joel Hawksley*
-
-*   `ActionView::Helpers::FormOptionsHelper#select` should mark option for `nil` as selected.
-
-    ```ruby
-    @post = Post.new
-    @post.category = nil
-
-    # Before
-    select("post", "category", none: nil, programming: 1, economics: 2)
-    # =>
-    # <select name="post[category]" id="post_category">
-    #   <option value="">none</option>
-    #  <option value="1">programming</option>
-    #  <option value="2">economics</option>
-    # </select>
-
-    # After
-    select("post", "category", none: nil, programming: 1, economics: 2)
-    # =>
-    # <select name="post[category]" id="post_category">
-    #   <option selected="selected" value="">none</option>
-    #  <option value="1">programming</option>
-    #  <option value="2">economics</option>
-    # </select>
+    ```erb
+    <%= render "maintenance_tasks/runs/info/#{run.status}" %>
     ```
 
-    *bogdanvlviv*
+    Previously, the DependencyTracker would ignore this render, but now it will
+    mark all partials in the "maintenance_tasks/runs/info" folder as
+    dependencies.
 
-*   Log lines for partial renders and started template renders are now
-    emitted at the `DEBUG` level instead of `INFO`.
+    *Hartley McGuire*
 
-    Completed template renders are still logged at the `INFO` level.
+*   Rename `text_area` methods into `textarea`
 
-    *DHH*
+    Old names are still available as aliases.
 
-*   ActionView::Helpers::SanitizeHelper: support rails-html-sanitizer 1.1.0.
+    *Sean Doyle*
 
-    *Juanito Fatas*
+*   Rename `check_box*` methods into `checkbox*`.
 
-*   Added `phone_to` helper method to create a link from mobile numbers.
+    Old names are still available as aliases.
 
-    *Pietro Moro*
+    *Jean Boussier*
 
-*   annotated_source_code returns an empty array so TemplateErrors without a
-    template in the backtrace are surfaced properly by DebugExceptions.
-
-    *Guilherme Mansur*, *Kasper Timm Hansen*
-
-*   Add autoload for SyntaxErrorInTemplate so syntax errors are correctly raised by DebugExceptions.
-
-    *Guilherme Mansur*, *Gannon McGibbon*
-
-*   `RenderingHelper` supports rendering objects that `respond_to?` `:render_in`.
-
-    *Joel Hawksley*, *Natasha Umer*, *Aaron Patterson*, *Shawn Allen*, *Emily Plummer*, *Diana Mounter*, *John Hawthorn*, *Nathan Herald*, *Zaid Zawaideh*, *Zach Ahn*
-
-*   Fix `select_tag` so that it doesn't change `options` when `include_blank` is present.
-
-    *Younes SERRAJ*
-
-
-Please check [6-0-stable](https://github.com/rails/rails/blob/6-0-stable/actionview/CHANGELOG.md) for previous changes.
+Please check [7-2-stable](https://github.com/rails/rails/blob/7-2-stable/actionview/CHANGELOG.md) for previous changes.

@@ -4,6 +4,9 @@ require "cases/helper"
 require "support/ddl_helper"
 
 class PostgresqlTime < ActiveRecord::Base
+  # Declare attributes to get rid from deprecation warnings on ActiveRecord 6.1
+  attribute :time_interval,        :string
+  attribute :scaled_time_interval, :interval
 end
 
 class PostgresqlOid < ActiveRecord::Base
@@ -13,10 +16,8 @@ class PostgresqlLtree < ActiveRecord::Base
 end
 
 class PostgresqlDataTypeTest < ActiveRecord::PostgreSQLTestCase
-  self.use_transactional_tests = false
-
   def setup
-    @connection = ActiveRecord::Base.connection
+    @connection = ActiveRecord::Base.lease_connection
 
     @connection.execute("INSERT INTO postgresql_times (id, time_interval, scaled_time_interval) VALUES (1, '1 year 2 days ago', '3 weeks ago')")
     @first_time = PostgresqlTime.find(1)
@@ -39,19 +40,19 @@ class PostgresqlDataTypeTest < ActiveRecord::PostgreSQLTestCase
   end
 
   def test_time_values
-    assert_equal "-1 years -2 days", @first_time.time_interval
-    assert_equal "-21 days", @first_time.scaled_time_interval
+    assert_equal "P-1Y-2D", @first_time.time_interval
+    assert_equal (-21.day), @first_time.scaled_time_interval
+  end
+
+  def test_update_large_time_in_seconds
+    @first_time.scaled_time_interval = 70.years.to_f
+    assert @first_time.save
+    assert @first_time.reload
+    assert_equal 70.years, @first_time.scaled_time_interval
   end
 
   def test_oid_values
     assert_equal 1234, @first_oid.obj_id
-  end
-
-  def test_update_time
-    @first_time.time_interval = "2 years 3 minutes"
-    assert @first_time.save
-    assert @first_time.reload
-    assert_equal "2 years 00:03:00", @first_time.time_interval
   end
 
   def test_update_oid
@@ -74,7 +75,7 @@ class PostgresqlInternalDataTypeTest < ActiveRecord::PostgreSQLTestCase
   include DdlHelper
 
   setup do
-    @connection = ActiveRecord::Base.connection
+    @connection = ActiveRecord::Base.lease_connection
   end
 
   def test_name_column_type

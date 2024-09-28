@@ -2,41 +2,41 @@
 
 module ActiveRecord
   module AttributeMethods
+    # = Active Record Attribute Methods \Read
     module Read
       extend ActiveSupport::Concern
 
       module ClassMethods # :nodoc:
         private
-          def define_method_attribute(name)
+          def define_method_attribute(canonical_name, owner:, as: canonical_name)
             ActiveModel::AttributeMethods::AttrNames.define_attribute_accessor_method(
-              generated_attribute_methods, name
+              owner, canonical_name
             ) do |temp_method_name, attr_name_expr|
-              generated_attribute_methods.module_eval <<-RUBY, __FILE__, __LINE__ + 1
-                def #{temp_method_name}
-                  name = #{attr_name_expr}
-                  _read_attribute(name) { |n| missing_attribute(n, caller) }
-                end
-              RUBY
+              owner.define_cached_method(temp_method_name, as: as, namespace: :active_record) do |batch|
+                batch <<
+                  "def #{temp_method_name}" <<
+                  "  _read_attribute(#{attr_name_expr}) { |n| missing_attribute(n, caller) }" <<
+                  "end"
+              end
             end
           end
       end
 
-      # Returns the value of the attribute identified by <tt>attr_name</tt> after
-      # it has been typecast (for example, "2004-12-12" in a date column is cast
-      # to a date object, like Date.new(2004, 12, 12)).
+      # Returns the value of the attribute identified by +attr_name+ after it
+      # has been type cast. For example, a date attribute will cast "2004-12-12"
+      # to <tt>Date.new(2004, 12, 12)</tt>. (For information about specific type
+      # casting behavior, see the types under ActiveModel::Type.)
       def read_attribute(attr_name, &block)
         name = attr_name.to_s
         name = self.class.attribute_aliases[name] || name
 
-        name = @primary_key if name == "id" && @primary_key
-        _read_attribute(name, &block)
+        @attributes.fetch_value(name, &block)
       end
 
       # This method exists to avoid the expensive primary_key check internally, without
       # breaking compatibility with the read_attribute API
-      def _read_attribute(attr_name, &block) # :nodoc
-        sync_with_transaction_state if @transaction_state&.finalized?
-        @attributes.fetch_value(attr_name.to_s, &block)
+      def _read_attribute(attr_name, &block) # :nodoc:
+        @attributes.fetch_value(attr_name, &block)
       end
 
       alias :attribute :_read_attribute

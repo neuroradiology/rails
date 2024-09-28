@@ -3,12 +3,12 @@
 require "cases/helper"
 require "models/face"
 require "models/interest"
-require "models/man"
+require "models/human"
 require "models/topic"
 
 class AbsenceValidationTest < ActiveRecord::TestCase
   def test_non_association
-    boy_klass = Class.new(Man) do
+    boy_klass = Class.new(Human) do
       def self.name; "Boy" end
       validates_absence_of :name
     end
@@ -18,7 +18,7 @@ class AbsenceValidationTest < ActiveRecord::TestCase
   end
 
   def test_has_one_marked_for_destruction
-    boy_klass = Class.new(Man) do
+    boy_klass = Class.new(Human) do
       def self.name; "Boy" end
       validates_absence_of :face
     end
@@ -28,11 +28,11 @@ class AbsenceValidationTest < ActiveRecord::TestCase
     assert_equal 1, boy.errors[:face].size, "should only add one error"
 
     boy.face.mark_for_destruction
-    assert boy.valid?, "should be valid if association is marked for destruction"
+    assert_predicate boy, :valid?, "should be valid if association is marked for destruction"
   end
 
   def test_has_many_marked_for_destruction
-    boy_klass = Class.new(Man) do
+    boy_klass = Class.new(Human) do
       def self.name; "Boy" end
       validates_absence_of :interests
     end
@@ -48,7 +48,7 @@ class AbsenceValidationTest < ActiveRecord::TestCase
   end
 
   def test_does_not_call_to_a_on_associations
-    boy_klass = Class.new(Man) do
+    boy_klass = Class.new(Human) do
       def self.name; "Boy" end
       validates_absence_of :face
     end

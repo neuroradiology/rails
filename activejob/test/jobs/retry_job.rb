@@ -10,13 +10,14 @@ class FirstRetryableErrorOfTwo < StandardError; end
 class SecondRetryableErrorOfTwo < StandardError; end
 class LongWaitError < StandardError; end
 class ShortWaitTenAttemptsError < StandardError; end
-class ExponentialWaitTenAttemptsError < StandardError; end
+class PolynomialWaitTenAttemptsError < StandardError; end
 class CustomWaitTenAttemptsError < StandardError; end
 class CustomCatchError < StandardError; end
 class DiscardableError < StandardError; end
 class FirstDiscardableErrorOfTwo < StandardError; end
 class SecondDiscardableErrorOfTwo < StandardError; end
 class CustomDiscardableError < StandardError; end
+class UnlimitedRetryError < StandardError; end
 
 class RetryJob < ActiveJob::Base
   retry_on DefaultsError
@@ -25,10 +26,11 @@ class RetryJob < ActiveJob::Base
   retry_on FirstRetryableErrorOfTwo, SecondRetryableErrorOfTwo, attempts: 4
   retry_on LongWaitError, wait: 1.hour, attempts: 10
   retry_on ShortWaitTenAttemptsError, wait: 1.second, attempts: 10
-  retry_on ExponentialWaitTenAttemptsError, wait: :exponentially_longer, attempts: 10
+  retry_on PolynomialWaitTenAttemptsError, wait: :polynomially_longer, attempts: 10
   retry_on CustomWaitTenAttemptsError, wait: ->(executions) { executions * 2 }, attempts: 10
   retry_on(CustomCatchError) { |job, error| JobBuffer.add("Dealt with a job that failed to retry in a custom way after #{job.arguments.second} attempts. Message: #{error.message}") }
   retry_on(ActiveJob::DeserializationError) { |job, error| JobBuffer.add("Raised #{error.class} for the #{job.executions} time") }
+  retry_on UnlimitedRetryError, attempts: :unlimited
 
   discard_on DiscardableError
   discard_on FirstDiscardableErrorOfTwo, SecondDiscardableErrorOfTwo
@@ -36,7 +38,7 @@ class RetryJob < ActiveJob::Base
 
   before_enqueue do |job|
     if job.arguments.include?(:log_scheduled_at) && job.scheduled_at
-      JobBuffer.add("Next execution scheduled at #{job.scheduled_at}")
+      JobBuffer.add("Next execution scheduled at #{job.scheduled_at.to_f}")
     end
   end
 

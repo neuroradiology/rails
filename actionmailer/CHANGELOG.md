@@ -1,10 +1,4 @@
-*   Fix ActionMailer assertions don't work for parameterized mail with legacy delivery job.
-
-    *bogdanvlviv*
-
-*   Added `email_address_with_name` to properly escape addresses with names.
-
-    *Sunny Ripert*
+## Rails 8.0.0.beta1 (September 26, 2024) ##
 
 
-Please check [6-0-stable](https://github.com/rails/rails/blob/6-0-stable/actionmailer/CHANGELOG.md) for previous changes.
+Please check [7-2-stable](https://github.com/rails/rails/blob/7-2-stable/actionmailer/CHANGELOG.md) for previous changes.

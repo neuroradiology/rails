@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "cases/helper"
+require "active_support/json"
 
 class DirtyTest < ActiveModel::TestCase
   class DirtyModel
@@ -183,7 +184,7 @@ class DirtyTest < ActiveModel::TestCase
     @model.status = "finished"
     assert_equal ["Otto", "Mr. Manfredgensonton"], @model.name_change
     assert_equal ["waiting", "finished"], @model.status_change
-    assert_equal @model.name_was, "Otto"
+    assert_equal "Otto", @model.name_was
   end
 
   test "using attribute_will_change! with a symbol" do
@@ -236,5 +237,26 @@ class DirtyTest < ActiveModel::TestCase
 
   test "model can be dup-ed without Attributes" do
     assert @model.dup
+  end
+
+  test "to_json should work on model" do
+    @model.name = "Dmitry"
+    assert_equal "{\"name\":\"Dmitry\",\"color\":null,\"size\":null,\"status\":\"initialized\"}", @model.to_json
+  end
+
+  test "to_json should work on model with :except string option" do
+    @model.name = "Dmitry"
+    assert_equal "{\"color\":null,\"size\":null,\"status\":\"initialized\"}", @model.to_json(except: "name")
+  end
+
+  test "to_json should work on model with :except array option" do
+    @model.name = "Dmitry"
+    assert_equal "{\"color\":null,\"size\":null,\"status\":\"initialized\"}", @model.to_json(except: ["name"])
+  end
+
+  test "to_json should work on model after save" do
+    @model.name = "Dmitry"
+    @model.save
+    assert_equal "{\"name\":\"Dmitry\",\"color\":null,\"size\":null,\"status\":\"initialized\"}", @model.to_json
   end
 end

@@ -5,12 +5,27 @@ require "active_model/attribute"
 module ActiveRecord
   class Relation
     class QueryAttribute < ActiveModel::Attribute # :nodoc:
+      def initialize(...)
+        super
+
+        # The query attribute value may be mutated before we actually "compile" the query.
+        # To avoid that if the type uses a serializer we eagerly compute the value for database
+        if value_before_type_cast.is_a?(StatementCache::Substitute)
+          # we don't need to serialize StatementCache::Substitute
+        elsif @type.serialized?
+          value_for_database
+        elsif @type.mutable? # If the type is simply mutable, we deep_dup it.
+          @value_before_type_cast = @value_before_type_cast.deep_dup
+        end
+      end
+
       def type_cast(value)
         value
       end
 
       def value_for_database
-        @value_for_database ||= super
+        @value_for_database = _value_for_database unless defined?(@value_for_database)
+        @value_for_database
       end
 
       def with_cast_value(value)
@@ -20,25 +35,28 @@ module ActiveRecord
       def nil?
         unless value_before_type_cast.is_a?(StatementCache::Substitute)
           value_before_type_cast.nil? ||
-            type.respond_to?(:subtype, true) && value_for_database.nil?
+            type.respond_to?(:subtype) && serializable? && value_for_database.nil?
         end
-      rescue ::RangeError
       end
 
       def infinite?
-        infinity?(value_before_type_cast) || infinity?(value_for_database)
-      rescue ::RangeError
+        infinity?(value_before_type_cast) || serializable? && infinity?(value_for_database)
       end
 
       def unboundable?
-        if defined?(@_unboundable)
-          @_unboundable
-        else
-          value_for_database unless value_before_type_cast.is_a?(StatementCache::Substitute)
-          @_unboundable = nil
+        unless defined?(@_unboundable)
+          serializable? { |value| @_unboundable = value <=> 0 } && @_unboundable = nil
         end
-      rescue ::RangeError
-        @_unboundable = type.cast(value_before_type_cast) <=> 0
+        @_unboundable
+      end
+
+      def ==(other)
+        super && value_for_database == other.value_for_database
+      end
+      alias eql? ==
+
+      def hash
+        [self.class, name, value_for_database, type].hash
       end
 
       private

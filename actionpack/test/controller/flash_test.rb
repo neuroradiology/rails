@@ -189,27 +189,27 @@ class FlashTest < ActionController::TestCase
 
   def test_redirect_to_with_alert
     get :redirect_with_alert
-    assert_equal "Beware the nowheres!", @controller.send(:flash)[:alert]
+    assert_equal "Beware the nowheres!", @controller.flash[:alert]
   end
 
   def test_redirect_to_with_notice
     get :redirect_with_notice
-    assert_equal "Good luck in the somewheres!", @controller.send(:flash)[:notice]
+    assert_equal "Good luck in the somewheres!", @controller.flash[:notice]
   end
 
   def test_render_with_flash_now_alert
     get :render_with_flash_now_alert
-    assert_equal "Beware the nowheres now!", @controller.send(:flash)[:alert]
+    assert_equal "Beware the nowheres now!", @controller.flash[:alert]
   end
 
   def test_render_with_flash_now_notice
     get :render_with_flash_now_notice
-    assert_equal "Good luck in the somewheres now!", @controller.send(:flash)[:notice]
+    assert_equal "Good luck in the somewheres now!", @controller.flash[:notice]
   end
 
   def test_redirect_to_with_other_flashes
     get :redirect_with_other_flashes
-    assert_equal "Horses!", @controller.send(:flash)[:joyride]
+    assert_equal "Horses!", @controller.flash[:joyride]
   end
 
   def test_redirect_to_with_adding_flash_types
@@ -219,9 +219,16 @@ class FlashTest < ActionController::TestCase
     end
     @controller = test_controller_with_flash_type_foo.new
     get :redirect_with_foo_flash
-    assert_equal "for great justice", @controller.send(:flash)[:foo]
+    assert_equal "for great justice", @controller.flash[:foo]
   ensure
     @controller = original_controller
+  end
+
+  def test_additional_flash_types_are_not_listed_in_actions_set
+    test_controller_with_flash_type_foo = Class.new(TestController) do
+      add_flash_types :foo
+    end
+    assert_not_includes test_controller_with_flash_type_foo.action_methods, "foo"
   end
 
   def test_add_flash_type_to_subclasses
@@ -244,7 +251,7 @@ class FlashIntegrationTest < ActionDispatch::IntegrationTest
   SessionKey = "_myapp_session"
   Generator = ActiveSupport::CachingKeyGenerator.new(
     ActiveSupport::KeyGenerator.new("b3c631c314c0bbca50c1b2843150fe33", iterations: 1000)
- )
+  )
   Rotations = ActiveSupport::Messages::RotationConfiguration.new
   SIGNED_COOKIE_SALT = "signed cookie"
 
@@ -303,7 +310,9 @@ class FlashIntegrationTest < ActionDispatch::IntegrationTest
     with_test_route_set do
       env = { "action_dispatch.request.flash_hash" => ActionDispatch::Flash::FlashHash.new }
       get "/set_flash", env: env
-      get "/set_flash", env: env
+      assert_nothing_raised do
+        get "/set_flash", env: env
+      end
     end
   end
 
@@ -311,7 +320,9 @@ class FlashIntegrationTest < ActionDispatch::IntegrationTest
     with_test_route_set do
       env = { "action_dispatch.request.flash_hash" => ActionDispatch::Flash::FlashHash.new }
       get "/set_flash_now", env: env
-      get "/set_flash_now", env: env
+      assert_nothing_raised do
+        get "/set_flash_now", env: env
+      end
     end
   end
 
@@ -370,18 +381,20 @@ class FlashIntegrationTest < ActionDispatch::IntegrationTest
       super(path, **options)
     end
 
+    def app
+      @app ||= self.class.build_app do |middleware|
+        middleware.use ActionDispatch::Session::CookieStore, key: SessionKey
+        middleware.use ActionDispatch::Flash
+        middleware.delete ActionDispatch::ShowExceptions
+      end
+    end
+
     def with_test_route_set
       with_routing do |set|
         set.draw do
-          ActiveSupport::Deprecation.silence do
+          ActionDispatch.deprecator.silence do
             get ":action", to: FlashIntegrationTest::TestController
           end
-        end
-
-        @app = self.class.build_app(set) do |middleware|
-          middleware.use ActionDispatch::Session::CookieStore, key: SessionKey
-          middleware.use ActionDispatch::Flash
-          middleware.delete ActionDispatch::ShowExceptions
         end
 
         yield

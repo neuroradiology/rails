@@ -14,8 +14,8 @@ require "active_job/instrumentation"
 require "active_job/timezones"
 require "active_job/translation"
 
-module ActiveJob #:nodoc:
-  # = Active Job
+module ActiveJob # :nodoc:
+  # = Active Job \Base
   #
   # Active Job objects can be configured to work with different backend
   # queuing frameworks. To specify a queue adapter to use:
@@ -69,8 +69,8 @@ module ActiveJob #:nodoc:
     include Execution
     include Callbacks
     include Exceptions
-    include Logging
     include Instrumentation
+    include Logging
     include Timezones
     include Translation
 

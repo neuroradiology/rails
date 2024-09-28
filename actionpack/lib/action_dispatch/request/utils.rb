@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+# :markup: markdown
+
 require "active_support/core_ext/hash/indifferent_access"
 
 module ActionDispatch
@@ -41,6 +43,10 @@ module ActionDispatch
         end
       end
 
+      def self.set_binary_encoding(request, params, controller, action)
+        CustomParamEncoder.encode(request, params, controller, action)
+      end
+
       class ParamEncoder # :nodoc:
         # Convert nested Hash to HashWithIndifferentAccess.
         def self.normalize_encode_params(params)
@@ -51,9 +57,11 @@ module ActionDispatch
             if params.has_key?(:tempfile)
               ActionDispatch::Http::UploadedFile.new(params)
             else
-              params.transform_values do |val|
-                normalize_encode_params(val)
-              end.with_indifferent_access
+              hwia = ActiveSupport::HashWithIndifferentAccess.new
+              params.each_pair do |key, val|
+                hwia[key] = normalize_encode_params(val)
+              end
+              hwia
             end
           else
             params
@@ -71,6 +79,29 @@ module ActionDispatch
           list = super
           list.compact!
           list
+        end
+      end
+
+      class CustomParamEncoder # :nodoc:
+        def self.encode(request, params, controller, action)
+          return params unless controller && controller.valid_encoding? && encoding_template = action_encoding_template(request, controller, action)
+          params.except(:controller, :action).each do |key, value|
+            ActionDispatch::Request::Utils.each_param_value(value) do |param|
+              # If `param` is frozen, it comes from the router defaults
+              next if param.frozen?
+
+              if encoding_template[key.to_s]
+                param.force_encoding(encoding_template[key.to_s])
+              end
+            end
+          end
+          params
+        end
+
+        def self.action_encoding_template(request, controller, action) # :nodoc:
+          request.controller_class_for(controller).action_encoding_template(action)
+        rescue MissingController
+          nil
         end
       end
     end

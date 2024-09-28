@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require "strscan"
+require "active_support/core_ext/erb/util"
+
 module ActionView
   class Template
     module Handlers
@@ -16,17 +19,12 @@ module ActionView
         # Do not escape templates of these mime types.
         class_attribute :escape_ignore_list, default: ["text/plain"]
 
-        [self, singleton_class].each do |base|
-          base.alias_method :escape_whitelist, :escape_ignore_list
-          base.alias_method :escape_whitelist=, :escape_ignore_list=
-
-          base.deprecate(
-            escape_whitelist: "use #escape_ignore_list instead",
-            :escape_whitelist= => "use #escape_ignore_list= instead"
-          )
-        end
+        # Strip trailing newlines from rendered output
+        class_attribute :strip_trailing_newlines, default: false
 
         ENCODING_TAG = Regexp.new("\\A(<%#{ENCODING_FLAG}-?%>)[ \\t]*")
+
+        LocationParsingError = Class.new(StandardError) # :nodoc:
 
         def self.call(template, source)
           new.call(template, source)
@@ -40,12 +38,32 @@ module ActionView
           true
         end
 
+        # Translate an error location returned by ErrorHighlight to the correct
+        # source location inside the template.
+        def translate_location(spot, backtrace_location, source)
+          # Tokenize the source line
+          tokens = ::ERB::Util.tokenize(source.lines[backtrace_location.lineno - 1])
+          new_first_column = find_offset(spot[:snippet], tokens, spot[:first_column])
+          lineno_delta = spot[:first_lineno] - backtrace_location.lineno
+          spot[:first_lineno] -= lineno_delta
+          spot[:last_lineno] -= lineno_delta
+
+          column_delta = spot[:first_column] - new_first_column
+          spot[:first_column] -= column_delta
+          spot[:last_column] -= column_delta
+          spot[:script_lines] = source.lines
+
+          spot
+        rescue NotImplementedError, LocationParsingError
+          nil
+        end
+
         def call(template, source)
           # First, convert to BINARY, so in case the encoding is
           # wrong, we can still find an encoding tag
           # (<%# encoding %>) inside the String using a regular
           # expression
-          template_source = source.dup.force_encoding(Encoding::ASCII_8BIT)
+          template_source = source.b
 
           erb = template_source.gsub(ENCODING_TAG, "")
           encoding = $2
@@ -55,11 +73,20 @@ module ActionView
           # Always make sure we return a String in the default_internal
           erb.encode!
 
-          self.class.erb_implementation.new(
-            erb,
+          # Strip trailing newlines from the template if enabled
+          erb.chomp! if strip_trailing_newlines
+
+          options = {
             escape: (self.class.escape_ignore_list.include? template.type),
             trim: (self.class.erb_trim_mode == "-")
-          ).src
+          }
+
+          if ActionView::Base.annotate_rendered_view_with_filenames && template.format == :html
+            options[:preamble] = "@output_buffer.safe_append='<!-- BEGIN #{template.short_identifier} -->';"
+            options[:postamble] = "@output_buffer.safe_append='<!-- END #{template.short_identifier} -->';@output_buffer"
+          end
+
+          self.class.erb_implementation.new(erb, options).src
         end
 
       private
@@ -76,6 +103,53 @@ module ActionView
 
           # Otherwise, raise an exception
           raise WrongEncodingError.new(string, string.encoding)
+        end
+
+        def find_offset(compiled, source_tokens, error_column)
+          compiled = StringScanner.new(compiled)
+
+          passed_tokens = []
+
+          while tok = source_tokens.shift
+            tok_name, str = *tok
+            case tok_name
+            when :TEXT
+              loop do
+                break if compiled.match?(str)
+                compiled.getch
+              end
+              raise LocationParsingError unless compiled.scan(str)
+            when :CODE
+              if compiled.pos > error_column
+                raise LocationParsingError, "We went too far"
+              end
+
+              if compiled.pos + str.bytesize >= error_column
+                offset = error_column - compiled.pos
+                return passed_tokens.map(&:last).join.bytesize + offset
+              else
+                unless compiled.scan(str)
+                  raise LocationParsingError, "Couldn't find code snippet"
+                end
+              end
+            when :OPEN
+              next_tok = source_tokens.first.last
+              loop do
+                break if compiled.match?(next_tok)
+                compiled.getch
+              end
+            when :CLOSE
+              next_tok = source_tokens.first.last
+              loop do
+                break if compiled.match?(next_tok)
+                compiled.getch
+              end
+            else
+              raise LocationParsingError, "Not implemented: #{tok.first}"
+            end
+
+            passed_tokens << tok
+          end
         end
       end
     end

@@ -42,23 +42,26 @@ module ActiveRecord
         # :method: unsigned_bigint
         # :call-seq: unsigned_bigint(*names, **options)
 
-        ##
-        # :method: unsigned_float
-        # :call-seq: unsigned_float(*names, **options)
-
-        ##
-        # :method: unsigned_decimal
-        # :call-seq: unsigned_decimal(*names, **options)
-
         included do
           define_column_methods :blob, :tinyblob, :mediumblob, :longblob,
             :tinytext, :mediumtext, :longtext, :unsigned_integer, :unsigned_bigint,
             :unsigned_float, :unsigned_decimal
+
+          deprecate :unsigned_float, :unsigned_decimal, deprecator: ActiveRecord.deprecator
         end
       end
 
+      # = Active Record MySQL Adapter \Table Definition
       class TableDefinition < ActiveRecord::ConnectionAdapters::TableDefinition
         include ColumnMethods
+
+        attr_reader :charset, :collation
+
+        def initialize(conn, name, charset: nil, collation: nil, **)
+          super
+          @charset = charset
+          @collation = collation
+        end
 
         def new_column_definition(name, type, **options) # :nodoc:
           case type
@@ -77,16 +80,24 @@ module ActiveRecord
         end
 
         private
+          def valid_column_definition_options
+            super + [:auto_increment, :charset, :as, :size, :unsigned, :first, :after, :type, :stored]
+          end
+
           def aliased_types(name, fallback)
             fallback
           end
 
           def integer_like_primary_key_type(type, options)
-            options[:auto_increment] = true
+            unless options[:auto_increment] == false
+              options[:auto_increment] = true
+            end
+
             type
           end
       end
 
+      # = Active Record MySQL Adapter \Table
       class Table < ActiveRecord::ConnectionAdapters::Table
         include ColumnMethods
       end

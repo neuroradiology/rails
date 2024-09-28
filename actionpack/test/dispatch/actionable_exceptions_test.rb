@@ -20,7 +20,11 @@ class ActionableExceptionsTest < ActionDispatch::IntegrationTest
   Noop = -> env { [200, {}, [""]] }
 
   setup do
-    @app = ActionDispatch::ActionableExceptions.new(Noop)
+    @app = Rack::Lint.new(
+      ActionDispatch::ActionableExceptions.new(
+        Rack::Lint.new(Noop),
+      ),
+    )
 
     Actions.clear
   end
@@ -30,7 +34,7 @@ class ActionableExceptionsTest < ActionDispatch::IntegrationTest
       error: ActionError.name,
       action: "Successful action",
       location: "/",
-    }
+    }, headers: { "action_dispatch.show_detailed_exceptions" => true }
 
     assert_equal ["Action!"], Actions
 
@@ -43,7 +47,7 @@ class ActionableExceptionsTest < ActionDispatch::IntegrationTest
       error: ActionError.name,
       action: "Successful action",
       location: "/",
-    }, headers: { "action_dispatch.show_exceptions" => false }
+    }, headers: { "action_dispatch.show_detailed_exceptions" => false }
 
     assert_empty Actions
   end
@@ -54,7 +58,7 @@ class ActionableExceptionsTest < ActionDispatch::IntegrationTest
         error: ActionError.name,
         action: "Failed action",
         location: "/",
-      }
+      }, headers: { "action_dispatch.show_detailed_exceptions" => true }
     end
   end
 
@@ -64,7 +68,7 @@ class ActionableExceptionsTest < ActionDispatch::IntegrationTest
         error: RuntimeError.name,
         action: "Inexistent action",
         location: "/",
-      }
+      }, headers: { "action_dispatch.show_detailed_exceptions" => true }
     end
   end
 
@@ -74,7 +78,17 @@ class ActionableExceptionsTest < ActionDispatch::IntegrationTest
         error: "",
         action: "Inexistent action",
         location: "/",
-      }
+      }, headers: { "action_dispatch.show_detailed_exceptions" => true }
     end
+  end
+
+  test "catches invalid redirections" do
+    post ActionDispatch::ActionableExceptions.endpoint, params: {
+      error: ActionError.name,
+      action: "Successful action",
+      location: "wss://example.com",
+    }, headers: { "action_dispatch.show_detailed_exceptions" => true }
+
+    assert_equal 400, response.status
   end
 end

@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+# :markup: markdown
+
 module ActionDispatch
   # :stopdoc:
   module Journey
@@ -40,7 +42,7 @@ module ActionDispatch
         @parameters.each do |index|
           param = parts[index]
           value = hash[param.name]
-          return "" unless value
+          return "" if value.nil?
           parts[index] = param.escape value
         end
 

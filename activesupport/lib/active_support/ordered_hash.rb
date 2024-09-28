@@ -7,7 +7,7 @@ YAML.add_builtin_type("omap") do |type, val|
 end
 
 module ActiveSupport
-  # DEPRECATED: <tt>ActiveSupport::OrderedHash</tt> implements a hash that preserves
+  # DEPRECATED: +ActiveSupport::OrderedHash+ implements a hash that preserves
   # insertion order.
   #
   #   oh = ActiveSupport::OrderedHash.new
@@ -17,11 +17,11 @@ module ActiveSupport
   #
   # Also, maps the +omap+ feature for YAML files
   # (See https://yaml.org/type/omap.html) to support ordered items
-  # when loading from yaml.
+  # when loading from YAML.
   #
-  # <tt>ActiveSupport::OrderedHash</tt> is namespaced to prevent conflicts
+  # +ActiveSupport::OrderedHash+ is namespaced to prevent conflicts
   # with other implementations.
-  class OrderedHash < ::Hash
+  class OrderedHash < ::Hash # :nodoc:
     def to_yaml_type
       "!tag:yaml.org,2002:omap"
     end

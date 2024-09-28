@@ -1,15 +1,28 @@
 # frozen_string_literal: true
 
+require "rouge"
+
+# Add more common shell commands
+Rouge::Lexers::Shell::BUILTINS << "|bin/rails|brew|bundle|gem|git|node|rails|rake|ruby|sqlite3|yarn"
+
 module RailsGuides
   class Markdown
-    class Renderer < Redcarpet::Render::HTML
+    class Renderer < Redcarpet::Render::HTML  # :nodoc:
+      APPLICATION_FILEPATH_REGEXP = /(app|config|db|lib|test)\//
+      ERB_FILEPATH_REGEXP = /^<%# #{APPLICATION_FILEPATH_REGEXP}.* %>/o
+      RUBY_FILEPATH_REGEXP = /^# #{APPLICATION_FILEPATH_REGEXP}/o
+
       cattr_accessor :edge, :version
 
       def block_code(code, language)
-        <<-HTML
-<div class="code_container">
-<pre><code class="language-#{class_for(language)}">#{ERB::Util.h(code)}</code></pre>
-</div>
+        formatter = Rouge::Formatters::HTML.new
+        lexer = ::Rouge::Lexer.find_fancy(lexer_language(language))
+        formatted_code = formatter.format(lexer.lex(code))
+        <<~HTML
+          <div class="interstitial code">
+          <pre><code class="highlight #{lexer_language(language)}">#{formatted_code}</code></pre>
+          <button class="clipboard-button" data-clipboard-text="#{clipboard_content(code, language)}">Copy</button>
+          </div>
         HTML
       end
 
@@ -24,9 +37,6 @@ module RailsGuides
       end
 
       def header(text, header_level)
-        # Always increase the heading level by 1, so we can use h1, h2 heading in the document
-        header_level += 1
-
         header_with_id = text.scan(/(.*){#(.*)}/)
         unless header_with_id.empty?
           %(<h#{header_level} id="#{header_with_id[0][1].strip}">#{header_with_id[0][0].strip}</h#{header_level}>)
@@ -58,19 +68,47 @@ module RailsGuides
           end
         end
 
-        def class_for(code_type)
+        def lexer_language(code_type)
           case code_type
-          when "ruby", "sql", "plain", "js", "yaml"
-            code_type
-          when "erb", "html+erb"
+          when "html+erb"
             "erb"
-          when "html"
-            "xml" # HTML is understood, but there are .xml rules in the CSS
           when "bash"
-            "shell-session"
+            "console"
+          when nil
+            "plaintext"
           else
-            "plain"
+            ::Rouge::Lexer.find(code_type) ? code_type : "plaintext"
           end
+        end
+
+        def clipboard_content(code, language)
+          # Remove prompt and results of commands.
+          prompt_regexp =
+            case language
+            when "bash"
+              /^\$ /
+            when "irb"
+              /^irb.*?> /
+            end
+
+          if prompt_regexp
+            code = code.lines.grep(prompt_regexp).join.gsub(prompt_regexp, "")
+          end
+
+          # Remove comments that reference an application file.
+          filepath_regexp =
+            case language
+            when "erb", "html+erb"
+              ERB_FILEPATH_REGEXP
+            when "ruby", "yaml", "yml"
+              RUBY_FILEPATH_REGEXP
+            end
+
+          if filepath_regexp
+            code = code.lines.grep_v(filepath_regexp).join
+          end
+
+          ERB::Util.html_escape(code)
         end
 
         def convert_notes(body)
@@ -92,7 +130,7 @@ module RailsGuides
               else
                 $1.downcase
               end
-            %(<div class="#{css_class}"><p>#{$2.strip}</p></div>)
+            %(<div class="interstitial #{css_class}"><p>#{$2.strip}</p></div>)
           end
         end
 

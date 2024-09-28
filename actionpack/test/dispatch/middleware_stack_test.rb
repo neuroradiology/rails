@@ -37,6 +37,24 @@ class MiddlewareStackTest < ActiveSupport::TestCase
     end
   end
 
+  test "delete ignores middleware not in the stack" do
+    assert_no_difference "@stack.size" do
+      @stack.delete BazMiddleware
+    end
+  end
+
+  test "delete! deletes the middleware" do
+    assert_difference "@stack.size", -1 do
+      @stack.delete! FooMiddleware
+    end
+  end
+
+  test "delete! requires the middleware to be in the stack" do
+    assert_raises RuntimeError do
+      @stack.delete! BazMiddleware
+    end
+  end
+
   test "use should push middleware as class onto the stack" do
     assert_difference "@stack.size" do
       @stack.use BazMiddleware
@@ -177,15 +195,17 @@ class MiddlewareStackTest < ActiveSupport::TestCase
   test "instruments the execution of middlewares" do
     events = []
 
-    subscriber = proc do |*args|
-      events << ActiveSupport::Notifications::Event.new(*args)
-    end
+    subscriber = proc { |event| events << event }
 
     ActiveSupport::Notifications.subscribed(subscriber, "process_middleware.action_dispatch") do
-      app = @stack.build(proc { |env| [200, {}, []] })
+      app = Rack::Lint.new(
+        @stack.build(Rack::Lint.new(proc { |env| [200, {}, []] }))
+      )
 
-      env = {}
-      app.call(env)
+      env = Rack::MockRequest.env_for("", {})
+      assert_nothing_raised do
+        app.call(env)
+      end
     end
 
     assert_equal 2, events.count

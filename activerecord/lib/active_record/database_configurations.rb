@@ -1,29 +1,84 @@
 # frozen_string_literal: true
 
+require "uri"
 require "active_record/database_configurations/database_config"
 require "active_record/database_configurations/hash_config"
 require "active_record/database_configurations/url_config"
 require "active_record/database_configurations/connection_url_resolver"
 
 module ActiveRecord
-  # ActiveRecord::DatabaseConfigurations returns an array of DatabaseConfig
-  # objects (either a HashConfig or UrlConfig) that are constructed from the
-  # application's database configuration hash or URL string.
+  # = Active Record Database Configurations
+  #
+  # +ActiveRecord::DatabaseConfigurations+ returns an array of +DatabaseConfig+
+  # objects that are constructed from the application's database
+  # configuration hash or URL string.
+  #
+  # The array of +DatabaseConfig+ objects in an application default to either a
+  # HashConfig or UrlConfig. You can retrieve your application's config by using
+  # ActiveRecord::Base.configurations.
+  #
+  # If you register a custom handler, objects will be created according to the
+  # conditions of the handler. See ::register_db_config_handler for more on
+  # registering custom handlers.
   class DatabaseConfigurations
     class InvalidConfigurationError < StandardError; end
 
     attr_reader :configurations
     delegate :any?, to: :configurations
 
+    singleton_class.attr_accessor :db_config_handlers # :nodoc:
+    self.db_config_handlers = [] # :nodoc:
+
+    # Allows an application to register a custom handler for database configuration
+    # objects. This is useful for creating a custom handler that responds to
+    # methods your application needs but Active Record doesn't implement. For
+    # example if you are using Vitess, you may want your Vitess configurations
+    # to respond to `sharded?`. To implement this define the following in an
+    # initializer:
+    #
+    #   ActiveRecord::DatabaseConfigurations.register_db_config_handler do |env_name, name, url, config|
+    #     next unless config.key?(:vitess)
+    #     VitessConfig.new(env_name, name, config)
+    #   end
+    #
+    # Note: applications must handle the condition in which custom config should be
+    # created in your handler registration otherwise all objects will use the custom
+    # handler.
+    #
+    # Then define your +VitessConfig+ to respond to the methods your application
+    # needs. It is recommended that you inherit from one of the existing
+    # database config classes to avoid having to reimplement all methods. Custom
+    # config handlers should only implement methods Active Record does not.
+    #
+    #   class VitessConfig < ActiveRecord::DatabaseConfigurations::UrlConfig
+    #     def sharded?
+    #       configuration_hash.fetch("sharded", false)
+    #     end
+    #   end
+    #
+    # For configs that have a +:vitess+ key, a +VitessConfig+ object will be
+    # created instead of a +UrlConfig+.
+    def self.register_db_config_handler(&block)
+      db_config_handlers << block
+    end
+
+    register_db_config_handler do |env_name, name, url, config|
+      if url
+        UrlConfig.new(env_name, name, url, config)
+      else
+        HashConfig.new(env_name, name, config)
+      end
+    end
+
     def initialize(configurations = {})
       @configurations = build_configs(configurations)
     end
 
     # Collects the configs for the environment and optionally the specification
-    # name passed in. To include replica configurations pass <tt>include_replicas: true</tt>.
+    # name passed in. To include replica configurations pass <tt>include_hidden: true</tt>.
     #
-    # If a name is provided a single DatabaseConfig object will be
-    # returned, otherwise an array of DatabaseConfig objects will be
+    # If a name is provided a single +DatabaseConfig+ object will be
+    # returned, otherwise an array of +DatabaseConfig+ objects will be
     # returned that corresponds with the environment and type requested.
     #
     # ==== Options
@@ -33,86 +88,69 @@ module ActiveRecord
     # * <tt>name:</tt> The db config name (i.e. primary, animals, etc.). Defaults
     #   to +nil+. If no +env_name+ is specified the config for the default env and the
     #   passed +name+ will be returned.
-    # * <tt>include_replicas:</tt> Determines whether to include replicas in
-    #   the returned list. Most of the time we're only iterating over the write
-    #   connection (i.e. migrations don't need to run for the write and read connection).
-    #   Defaults to +false+.
-    def configs_for(env_name: nil, spec_name: nil, name: nil, include_replicas: false)
-      if spec_name
-        name = spec_name
-        ActiveSupport::Deprecation.warn("The kwarg `spec_name` is deprecated in favor of `name`. `spec_name` will be removed in Rails 6.2")
-      end
-
+    # * <tt>config_key:</tt> Selects configs that contain a particular key in the configuration
+    #   hash. Useful for selecting configs that use a custom db config handler or finding
+    #   configs with hashes that contain a particular key.
+    # * <tt>include_hidden:</tt> Determines whether to include replicas and configurations
+    #   hidden by <tt>database_tasks: false</tt> in the returned list. Most of the time we're only
+    #   iterating over the primary connections (i.e. migrations don't need to run for the
+    #   write and read connection). Defaults to +false+.
+    def configs_for(env_name: nil, name: nil, config_key: nil, include_hidden: false)
       env_name ||= default_env if name
       configs = env_with_configs(env_name)
 
-      unless include_replicas
+      unless include_hidden
         configs = configs.select do |db_config|
-          !db_config.replica?
+          db_config.database_tasks?
+        end
+      end
+
+      if config_key
+        configs = configs.select do |db_config|
+          db_config.configuration_hash.key?(config_key)
         end
       end
 
       if name
         configs.find do |db_config|
-          db_config.name == name
+          db_config.name == name.to_s
         end
       else
         configs
       end
     end
 
-    # Returns the config hash that corresponds with the environment
-    #
-    # If the application has multiple databases +default_hash+ will
-    # return the first config hash for the environment.
-    #
-    #   { database: "my_db", adapter: "mysql2" }
-    def default_hash(env = default_env)
-      default = find_db_config(env)
-      default.configuration_hash if default
-    end
-    alias :[] :default_hash
-    deprecate "[]": "Use configs_for", default_hash: "Use configs_for"
-
-    # Returns a single DatabaseConfig object based on the requested environment.
+    # Returns a single +DatabaseConfig+ object based on the requested environment.
     #
     # If the application has multiple databases +find_db_config+ will return
-    # the first DatabaseConfig for the environment.
+    # the first +DatabaseConfig+ for the environment.
     def find_db_config(env)
+      env = env.to_s
       configurations.find do |db_config|
-        db_config.env_name == env.to_s ||
-          (db_config.for_current_env? && db_config.name == env.to_s)
+        db_config.for_current_env? && (db_config.env_name == env || db_config.name == env)
+      end || configurations.find do |db_config|
+        db_config.env_name == env
       end
     end
 
-    # Returns the DatabaseConfigurations object as a Hash.
-    def to_h
-      configurations.inject({}) do |memo, db_config|
-        memo.merge(db_config.env_name => db_config.configuration_hash.stringify_keys)
-      end
+    # A primary configuration is one that is named primary or if there is
+    # no primary, the first configuration for an environment will be treated
+    # as primary. This is used as the "default" configuration and is used
+    # when the application needs to treat one configuration differently. For
+    # example, when Rails dumps the schema, the primary configuration's schema
+    # file will be named `schema.rb` instead of `primary_schema.rb`.
+    def primary?(name) # :nodoc:
+      return true if name == "primary"
+
+      first_config = find_db_config(default_env)
+      first_config && name == first_config.name
     end
-    deprecate to_h: "You can use `ActiveRecord::Base.configurations.configs_for(env_name: 'env', name: 'primary').configuration_hash` to get the configuration hashes."
 
     # Checks if the application's configurations are empty.
-    #
-    # Aliased to blank?
     def empty?
       configurations.empty?
     end
     alias :blank? :empty?
-
-    def each
-      throw_getter_deprecation(:each)
-      configurations.each { |config|
-        yield [config.env_name, config.configuration_hash]
-      }
-    end
-
-    def first
-      throw_getter_deprecation(:first)
-      config = configurations.first
-      [config.env_name, config.configuration_hash]
-    end
 
     # Returns fully resolved connection, accepts hash, string or symbol.
     # Always returns a DatabaseConfiguration::DatabaseConfig
@@ -164,7 +202,7 @@ module ActiveRecord
         return configs if configs.is_a?(Array)
 
         db_configs = configs.flat_map do |env_name, config|
-          if config.is_a?(Hash) && config.all? { |_, v| v.is_a?(Hash) }
+          if config.is_a?(Hash) && config.values.all?(Hash)
             walk_configs(env_name.to_s, config)
           else
             build_db_config_from_raw_config(env_name.to_s, "primary", config)
@@ -191,7 +229,7 @@ module ActiveRecord
           raise AdapterNotSpecified, <<~MSG
             The `#{name}` database is not configured for the `#{default_env}` environment.
 
-              Available databases configurations are:
+              Available database configurations are:
 
               #{build_configuration_sentence}
           MSG
@@ -199,7 +237,7 @@ module ActiveRecord
       end
 
       def build_configuration_sentence
-        configs = configs_for(include_replicas: true)
+        configs = configs_for(include_hidden: true)
 
         configs.group_by(&:env_name).map do |env, config|
           names = config.map(&:name)
@@ -233,15 +271,16 @@ module ActiveRecord
       end
 
       def build_db_config_from_hash(env_name, name, config)
-        if config.has_key?(:url)
-          url = config[:url]
-          config_without_url = config.dup
-          config_without_url.delete :url
+        url = config[:url]
+        config_without_url = config.dup
+        config_without_url.delete :url
 
-          UrlConfig.new(env_name, name, url, config_without_url)
-        else
-          HashConfig.new(env_name, name, config)
+        DatabaseConfigurations.db_config_handlers.reverse_each do |handler|
+          config = handler.call(env_name, name, url, config_without_url)
+          return config if config
         end
+
+        nil
       end
 
       def merge_db_environment_variables(current_env, configs)
@@ -265,38 +304,6 @@ module ActiveRecord
         url = ENV[name_env_key]
         url ||= ENV["DATABASE_URL"] if name == "primary"
         url
-      end
-
-      def method_missing(method, *args, &blk)
-        case method
-        when :fetch
-          throw_getter_deprecation(method)
-          configs_for(env_name: args.first)
-        when :values
-          throw_getter_deprecation(method)
-          configurations.map(&:configuration_hash)
-        when :[]=
-          throw_setter_deprecation(method)
-
-          env_name = args[0]
-          config = args[1]
-
-          remaining_configs = configurations.reject { |db_config| db_config.env_name == env_name }
-          new_config = build_configs(env_name => config)
-          new_configs = remaining_configs + new_config
-
-          ActiveRecord::Base.configurations = new_configs
-        else
-          raise NotImplementedError, "`ActiveRecord::Base.configurations` in Rails 6 now returns an object instead of a hash. The `#{method}` method is not supported. Please use `configs_for` or consult the documentation for supported methods."
-        end
-      end
-
-      def throw_setter_deprecation(method)
-        ActiveSupport::Deprecation.warn("Setting `ActiveRecord::Base.configurations` with `#{method}` is deprecated. Use `ActiveRecord::Base.configurations=` directly to set the configurations instead.")
-      end
-
-      def throw_getter_deprecation(method)
-        ActiveSupport::Deprecation.warn("`ActiveRecord::Base.configurations` no longer returns a hash. Methods that act on the hash like `#{method}` are deprecated and will be removed in Rails 6.1. Use the `configs_for` method to collect and iterate over the database configurations.")
       end
   end
 end

@@ -1,17 +1,16 @@
 # frozen_string_literal: true
 
-require "fiber"
 
 module ActionView
   # == TODO
   #
   # * Support streaming from child templates, partials and so on.
   # * Rack::Cache needs to support streaming bodies
-  class StreamingTemplateRenderer < TemplateRenderer #:nodoc:
+  class StreamingTemplateRenderer < TemplateRenderer # :nodoc:
     # A valid Rack::Body (i.e. it responds to each).
     # It is initialized with a block that, when called, starts
     # rendering the template.
-    class Body #:nodoc:
+    class Body # :nodoc:
       def initialize(&start)
         @start = start
       end
@@ -42,11 +41,11 @@ module ActionView
     # For streaming, instead of rendering a given a template, we return a Body
     # object that responds to each. This object is initialized with a block
     # that knows how to render the template.
-    def render_template(view, template, layout_name = nil, locals = {}) #:nodoc:
+    def render_template(view, template, layout_name = nil, locals = {}) # :nodoc:
       return [super.body] unless layout_name && template.supports_streaming?
 
       locals ||= {}
-      layout   = layout_name && find_layout(layout_name, locals.keys, [formats.first])
+      layout   = find_layout(layout_name, locals.keys, [formats.first])
 
       Body.new do |buffer|
         delayed_render(buffer, template, layout, view, locals)
@@ -62,7 +61,12 @@ module ActionView
         output  = ActionView::StreamingBuffer.new(buffer)
         yielder = lambda { |*name| view._layout_for(*name) }
 
-        instrument(:template, identifier: template.identifier, layout: (layout && layout.virtual_path)) do
+        ActiveSupport::Notifications.instrument(
+          "render_template.action_view",
+          identifier: template.identifier,
+          layout: layout && layout.virtual_path,
+          locals: locals
+        ) do
           outer_config = I18n.config
           fiber = Fiber.new do
             I18n.config = outer_config

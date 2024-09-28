@@ -1,11 +1,13 @@
 # frozen_string_literal: true
 
+# :markup: markdown
+
 module ActionDispatch
   # :stopdoc:
   module Journey
     class Route
       attr_reader :app, :path, :defaults, :name, :precedence, :constraints,
-                  :internal, :scope_options
+                  :internal, :scope_options, :ast, :source_location
 
       alias :conditions :constraints
 
@@ -13,6 +15,7 @@ module ActionDispatch
         VERBS = %w{ DELETE GET HEAD OPTIONS LINK PATCH POST PUT TRACE UNLINK }
         VERBS.each do |v|
           class_eval <<-eoc, __FILE__, __LINE__ + 1
+            # frozen_string_literal: true
             class #{v}
               def self.verb; name.split("::").last; end
               def self.call(req); req.#{v.downcase}?; end
@@ -51,8 +54,8 @@ module ActionDispatch
 
       ##
       # +path+ is a path constraint.
-      # +constraints+ is a hash of constraints to be applied to this route.
-      def initialize(name:, app: nil, path:, constraints: {}, required_defaults: [], defaults: {}, request_method_match: nil, precedence: 0, scope_options: {}, internal: false)
+      # `constraints` is a hash of constraints to be applied to this route.
+      def initialize(name:, app: nil, path:, constraints: {}, required_defaults: [], defaults: {}, request_method_match: nil, precedence: 0, scope_options: {}, internal: false, source_location: nil)
         @name        = name
         @app         = app
         @path        = path
@@ -64,40 +67,34 @@ module ActionDispatch
         @_required_defaults = required_defaults
         @required_parts    = nil
         @parts             = nil
-        @decorated_ast     = nil
         @precedence        = precedence
         @path_formatter    = @path.build_formatter
         @scope_options     = scope_options
         @internal          = internal
+        @source_location   = source_location
+
+        @ast = @path.ast.root
+        @path.ast.route = self
       end
 
       def eager_load!
         path.eager_load!
-        ast
         parts
         required_defaults
         nil
       end
 
-      def ast
-        @decorated_ast ||= begin
-          decorated_ast = path.ast
-          decorated_ast.find_all(&:terminal?).each { |n| n.memo = self }
-          decorated_ast
-        end
-      end
-
-      # Needed for `bin/rails routes`. Picks up succinctly defined requirements
-      # for a route, for example route
+      # Needed for `bin/rails routes`. Picks up succinctly defined requirements for a
+      # route, for example route
       #
-      #   get 'photo/:id', :controller => 'photos', :action => 'show',
-      #     :id => /[A-Z]\d{5}/
+      #     get 'photo/:id', :controller => 'photos', :action => 'show',
+      #       :id => /[A-Z]\d{5}/
       #
-      # will have {:controller=>"photos", :action=>"show", :id=>/[A-Z]\d{5}/}
-      # as requirements.
+      # will have {:controller=>"photos", :action=>"show", :[id=>/](A-Z){5}/} as
+      # requirements.
       def requirements
         @defaults.merge(path.requirements).delete_if { |_, v|
-          /.+?/ == v
+          /.+?/m == v
         }
       end
 
@@ -141,7 +138,7 @@ module ActionDispatch
       end
 
       def glob?
-        path.spec.any?(Nodes::Star)
+        path.ast.glob?
       end
 
       def dispatcher?

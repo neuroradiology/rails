@@ -1,5 +1,9 @@
-class MessagesController < ApplicationController
+class MessagesController < ActionController::Base
   before_action :set_message, only: [:show, :edit, :update, :destroy]
+
+  # This class intentionally does not extend ApplicationController, so the
+  # layout must be set manually. See commit 614e813 for details
+  layout "application"
 
   # GET /messages
   def index
@@ -26,7 +30,7 @@ class MessagesController < ApplicationController
     if @message.save
       redirect_to @message, notice: 'Message was successfully created.'
     else
-      render :new
+      render :new, status: :unprocessable_entity
     end
   end
 
@@ -35,7 +39,7 @@ class MessagesController < ApplicationController
     if @message.update(message_params)
       redirect_to @message, notice: 'Message was successfully updated.'
     else
-      render :edit
+      render :edit, status: :unprocessable_entity
     end
   end
 
@@ -51,8 +55,8 @@ class MessagesController < ApplicationController
       @message = Message.find(params[:id])
     end
 
-    # Only allow a trusted parameter "white list" through.
+    # Only allow a trusted parameter list through.
     def message_params
-      params.require(:message).permit(:subject, :content)
+      params.expect(message: [:subject, :content])
     end
 end

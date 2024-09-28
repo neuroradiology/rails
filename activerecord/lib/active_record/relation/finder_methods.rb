@@ -6,7 +6,9 @@ module ActiveRecord
   module FinderMethods
     ONE_AS_ONE = "1 AS one"
 
-    # Find by id - This can either be a specific id (1), a list of ids (1, 5, 6), or an array of ids ([5, 6, 10]).
+    # Find by id - This can either be a specific id (ID), a list of ids (ID, ID, ID), or an array of ids ([ID, ID, ID]).
+    # `ID` refers to an "identifier". For models with a single-column primary key, `ID` will be a single value,
+    # and for models with a composite primary key, it will be an array of values.
     # If one or more records cannot be found for the requested ids, then ActiveRecord::RecordNotFound will be raised.
     # If the primary key is an integer, find by id coerces its arguments by using +to_i+.
     #
@@ -14,9 +16,30 @@ module ActiveRecord
     #   Person.find("1")        # returns the object for ID = 1
     #   Person.find("31-sarah") # returns the object for ID = 31
     #   Person.find(1, 2, 6)    # returns an array for objects with IDs in (1, 2, 6)
-    #   Person.find([7, 17])    # returns an array for objects with IDs in (7, 17)
+    #   Person.find([7, 17])    # returns an array for objects with IDs in (7, 17), or with composite primary key [7, 17]
     #   Person.find([1])        # returns an array for the object with ID = 1
     #   Person.where("administrator = 1").order("created_on DESC").find(1)
+    #
+    # ==== Find a record for a composite primary key model
+    #   TravelRoute.primary_key = [:origin, :destination]
+    #
+    #   TravelRoute.find(["Ottawa", "London"])
+    #   => #<TravelRoute origin: "Ottawa", destination: "London">
+    #
+    #   TravelRoute.find([["Paris", "Montreal"]])
+    #   => [#<TravelRoute origin: "Paris", destination: "Montreal">]
+    #
+    #   TravelRoute.find(["New York", "Las Vegas"], ["New York", "Portland"])
+    #   => [
+    #        #<TravelRoute origin: "New York", destination: "Las Vegas">,
+    #        #<TravelRoute origin: "New York", destination: "Portland">
+    #      ]
+    #
+    #   TravelRoute.find([["Berlin", "London"], ["Barcelona", "Lisbon"]])
+    #   => [
+    #        #<TravelRoute origin: "Berlin", destination: "London">,
+    #        #<TravelRoute origin: "Barcelona", destination: "Lisbon">
+    #      ]
     #
     # NOTE: The returned records are in the same order as the ids you provide.
     # If you want the results to be sorted by database, you can use ActiveRecord::QueryMethods#where
@@ -64,6 +87,14 @@ module ActiveRecord
     #
     #   Person.where(name: 'Spartacus', rating: 4).pluck(:field1, :field2)
     #   # returns an Array of the required fields.
+    #
+    # ==== Edge Cases
+    #
+    #   Person.find(37)          # raises ActiveRecord::RecordNotFound exception if the record with the given ID does not exist.
+    #   Person.find([37])        # raises ActiveRecord::RecordNotFound exception if the record with the given ID in the input array does not exist.
+    #   Person.find(nil)         # raises ActiveRecord::RecordNotFound exception if the argument is nil.
+    #   Person.find([])          # returns an empty array if the argument is an empty array.
+    #   Person.find              # raises ActiveRecord::RecordNotFound exception if the argument is not provided.
     def find(*args)
       return super if block_given?
       find_with_ids(*args)
@@ -104,6 +135,32 @@ module ActiveRecord
       take || raise_record_not_found_exception!
     end
 
+    # Finds the sole matching record. Raises ActiveRecord::RecordNotFound if no
+    # record is found. Raises ActiveRecord::SoleRecordExceeded if more than one
+    # record is found.
+    #
+    #   Product.where(["price = %?", price]).sole
+    def sole
+      found, undesired = first(2)
+
+      if found.nil?
+        raise_record_not_found_exception!
+      elsif undesired.nil?
+        found
+      else
+        raise ActiveRecord::SoleRecordExceeded.new(model)
+      end
+    end
+
+    # Finds the sole matching record. Raises ActiveRecord::RecordNotFound if no
+    # record is found. Raises ActiveRecord::SoleRecordExceeded if more than one
+    # record is found.
+    #
+    #   Product.find_sole_by(["price = %?", price])
+    def find_sole_by(arg, *args)
+      where(arg, *args).sole
+    end
+
     # Find the first record (or first N records if a parameter is supplied).
     # If no order is defined it will order by primary key.
     #
@@ -114,15 +171,6 @@ module ActiveRecord
     #   Person.first(3) # returns the first three objects fetched by SELECT * FROM people ORDER BY people.id LIMIT 3
     #
     def first(limit = nil)
-      if !order_values.empty? && order_values.all?(&:blank?)
-        blank_value = order_values.first
-        ActiveSupport::Deprecation.warn(<<~MSG.squish)
-          `.reorder(#{blank_value.inspect})` with `.first` / `.first!` no longer
-          takes non-deterministic result in Rails 6.2.
-          To continue taking non-deterministic result, use `.take` / `.take!` instead.
-        MSG
-      end
-
       if limit
         find_nth_with_limit(0, limit)
       else
@@ -307,6 +355,8 @@ module ActiveRecord
     #   Person.exists?
     #   Person.where(name: 'Spartacus', rating: 4).exists?
     def exists?(conditions = :none)
+      return false if @none
+
       if Base === conditions
         raise ArgumentError, <<-MSG.squish
           You are passing an instance of ActiveRecord::Base to `exists?`.
@@ -322,9 +372,39 @@ module ActiveRecord
       end
 
       relation = construct_relation_for_exists(conditions)
+      return false if relation.where_clause.contradiction?
 
-      skip_query_cache_if_necessary { connection.select_one(relation.arel, "#{name} Exists?") } ? true : false
+      skip_query_cache_if_necessary do
+        with_connection do |c|
+          c.select_rows(relation.arel, "#{model.name} Exists?").size == 1
+        end
+      end
     end
+
+    # Returns true if the relation contains the given record or false otherwise.
+    #
+    # No query is performed if the relation is loaded; the given record is
+    # compared to the records in memory. If the relation is unloaded, an
+    # efficient existence query is performed, as in #exists?.
+    def include?(record)
+      # The existing implementation relies on receiving an Active Record instance as the input parameter named record.
+      # Any non-Active Record object passed to this implementation is guaranteed to return `false`.
+      return false unless record.is_a?(model)
+
+      if loaded? || offset_value || limit_value || having_clause.any?
+        records.include?(record)
+      else
+        id = if record.class.composite_primary_key?
+          record.class.primary_key.zip(record.id).to_h
+        else
+          record.id
+        end
+
+        exists?(id)
+      end
+    end
+
+    alias :member? :include?
 
     # This method is called whenever no records are found with either a single
     # id or multiple ids and raises an ActiveRecord::RecordNotFound exception.
@@ -335,15 +415,15 @@ module ActiveRecord
     # the expected number of results should be provided in the +expected_size+
     # argument.
     def raise_record_not_found_exception!(ids = nil, result_size = nil, expected_size = nil, key = primary_key, not_found_ids = nil) # :nodoc:
-      conditions = arel.where_sql(@klass)
-      conditions = " [#{conditions}]" if conditions
-      name = @klass.name
+      conditions = " [#{arel.where_sql(model)}]" unless where_clause.empty?
+
+      name = model.name
 
       if ids.nil?
         error = +"Couldn't find #{name}"
         error << " with#{conditions}" if conditions
         raise RecordNotFound.new(error, name, key)
-      elsif Array(ids).size == 1
+      elsif Array.wrap(ids).size == 1
         error = "Couldn't find #{name} with '#{key}'=#{ids}#{conditions}"
         raise RecordNotFound.new(error, name, key, ids)
       else
@@ -355,10 +435,6 @@ module ActiveRecord
     end
 
     private
-      def offset_index
-        offset_value || 0
-      end
-
       def construct_relation_for_exists(conditions)
         conditions = sanitize_forbidden_attributes(conditions)
 
@@ -380,11 +456,11 @@ module ActiveRecord
 
       def apply_join_dependency(eager_loading: group_values.empty?)
         join_dependency = construct_join_dependency(
-          eager_load_values + includes_values, Arel::Nodes::OuterJoin
+          eager_load_values | includes_values, Arel::Nodes::OuterJoin
         )
         relation = except(:includes, :eager_load, :preload).joins!(join_dependency)
 
-        if eager_loading && !(
+        if eager_loading && has_limit_or_offset? && !(
             using_limitable_reflections?(join_dependency.reflections) &&
             using_limitable_reflections?(
               construct_join_dependency(
@@ -393,12 +469,12 @@ module ActiveRecord
                 ), nil
               ).reflections
             )
-        )
-          if has_limit_or_offset?
-            limited_ids = limited_ids_for(relation)
-            limited_ids.empty? ? relation.none! : relation.where!(primary_key => limited_ids)
+          )
+          relation = skip_query_cache_if_necessary do
+            model.with_connection do |c|
+              c.distinct_relation_for_primary_key(relation)
+            end
           end
-          relation.limit_value = relation.offset_value = nil
         end
 
         if block_given?
@@ -408,31 +484,26 @@ module ActiveRecord
         end
       end
 
-      def limited_ids_for(relation)
-        values = @klass.connection.columns_for_distinct(
-          connection.visitor.compile(arel_attribute(primary_key)),
-          relation.order_values
-        )
-
-        relation = relation.except(:select).select(values).distinct!
-
-        id_rows = skip_query_cache_if_necessary { @klass.connection.select_all(relation.arel, "SQL") }
-        id_rows.map { |row| row[primary_key] }
-      end
-
       def using_limitable_reflections?(reflections)
         reflections.none?(&:collection?)
       end
 
       def find_with_ids(*ids)
-        raise UnknownPrimaryKey.new(@klass) if primary_key.nil?
+        raise UnknownPrimaryKey.new(model) if primary_key.nil?
 
-        expects_array = ids.first.kind_of?(Array)
+        expects_array = if model.composite_primary_key?
+          ids.first.first.is_a?(Array)
+        else
+          ids.first.is_a?(Array)
+        end
+
         return [] if expects_array && ids.first.empty?
 
-        ids = ids.flatten.compact.uniq
+        ids = ids.first if expects_array
 
-        model_name = @klass.name
+        ids = ids.compact.uniq
+
+        model_name = model.name
 
         case ids.size
         when 0
@@ -454,7 +525,12 @@ module ActiveRecord
           MSG
         end
 
-        relation = where(primary_key => id)
+        relation = if model.composite_primary_key?
+          where(primary_key.zip(id).to_h)
+        else
+          where(primary_key => id)
+        end
+
         record = relation.take
 
         raise_record_not_found_exception!(id, 0, 1) unless record
@@ -465,7 +541,9 @@ module ActiveRecord
       def find_some(ids)
         return find_some_ordered(ids) unless order_values.present?
 
-        result = where(primary_key => ids).to_a
+        relation = where(primary_key => ids)
+        relation = relation.select(table[primary_key]) unless select_values.empty?
+        result = relation.to_a
 
         expected_size =
           if limit_value && ids.size > limit_value
@@ -489,13 +567,13 @@ module ActiveRecord
       def find_some_ordered(ids)
         ids = ids.slice(offset_value || 0, limit_value || ids.size) || []
 
-        result = except(:limit, :offset).where(primary_key => ids).records
+        relation = except(:limit, :offset)
+        relation = relation.where(primary_key => ids)
+        relation = relation.select(table[primary_key]) unless select_values.empty?
+        result = relation.records
 
         if result.size == ids.size
-          pk_type = @klass.type_for_attribute(primary_key)
-
-          records_by_id = result.index_by(&:id)
-          ids.map { |id| records_by_id.fetch(pk_type.cast(id)) }
+          result.in_order_of(:id, ids.map { |id| model.type_for_attribute(primary_key).cast(id) })
         else
           raise_record_not_found_exception!(ids, result.size, ids.size)
         end
@@ -518,7 +596,8 @@ module ActiveRecord
       end
 
       def find_nth(index)
-        @offsets[offset_index + index] ||= find_nth_with_limit(index, 1).first
+        @offsets ||= {}
+        @offsets[index] ||= find_nth_with_limit(index, 1).first
       end
 
       def find_nth_with_limit(index, limit)
@@ -532,7 +611,7 @@ module ActiveRecord
           end
 
           if limit > 0
-            relation = relation.offset(offset_index + index) unless index.zero?
+            relation = relation.offset((offset_value || 0) + index) unless index.zero?
             relation.limit(limit).to_a
           else
             []
@@ -546,10 +625,10 @@ module ActiveRecord
         else
           relation = ordered_relation
 
-          if equal?(relation) || has_limit_or_offset?
+          if relation.order_values.empty? || relation.has_limit_or_offset?
             relation.records[-index]
           else
-            relation.last(index)[-index]
+            relation.reverse_order.offset(index - 1).first
           end
         end
       end
@@ -559,15 +638,24 @@ module ActiveRecord
       end
 
       def ordered_relation
-        if order_values.empty? && (implicit_order_column || primary_key)
-          if implicit_order_column && primary_key && implicit_order_column != primary_key
-            order(arel_attribute(implicit_order_column).asc, arel_attribute(primary_key).asc)
-          else
-            order(arel_attribute(implicit_order_column || primary_key).asc)
-          end
+        if order_values.empty? && (model.implicit_order_column || !model.query_constraints_list.nil? || primary_key)
+          order(_order_columns.map { |column| table[column].asc })
         else
           self
         end
+      end
+
+      def _order_columns
+        oc = []
+
+        oc << model.implicit_order_column if model.implicit_order_column
+        oc << model.query_constraints_list if model.query_constraints_list
+
+        if model.primary_key && model.query_constraints_list.nil?
+          oc << model.primary_key
+        end
+
+        oc.flatten.uniq.compact
       end
   end
 end

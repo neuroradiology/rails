@@ -1,510 +1,346 @@
-*   Dump the schema or structure of a database when calling db:migrate:name
+## Rails 8.0.0.beta1 (September 26, 2024) ##
 
-    In previous versions of Rails, `rails db:migrate` would dump the schema of the database. In Rails 6, that holds true (`rails db:migrate` dumps all databases' schemas), but `rails db:migrate:name` does not share that behavior.
+*   Allow `drop_table` to accept an array of table names.
 
-    Going forward, calls to `rails db:migrate:name` will dump the schema (or structure) of the database being migrated.
-
-    *Kyle Thompson*
-
-*   Reset the `ActiveRecord::Base` connection after `rails db:migrate:name`
-
-    When `rails db:migrate` has finished, it ensures the `ActiveRecord::Base` connection is reset to its original configuration. Going forward, `rails db:migrate:name` will have the same behavior.
-
-    *Kyle Thompson*
-
-*   Disallow calling `connected_to` on subclasses of `ActiveRecord::Base`.
-
-    Behavior has not changed here but the previous API could be misleading to people who thought it would switch connections for only that class. `connected_to` switches the context from which we are getting connections, not the connections themselves.
-
-    *Eileen M. Uchitelle*, *John Crepezzi*
-
-*   Add support for horizontal sharding to `connects_to` and `connected_to`.
-
-    Applications can now connect to multiple shards and switch between their shards in an application. Note that the shard swapping is still a manual process as this change does not include an API for automatic shard swapping.
-
-    Usage:
-
-    Given the following configuration:
-
-    ```yaml
-    # config/database.yml
-    production:
-      primary:
-        database: my_database
-      primary_shard_one:
-        database: my_database_shard_one
-    ```
-
-    Connect to multiple shards:
+    This will let you to drop multiple tables in a single call.
 
     ```ruby
-    class ApplicationRecord < ActiveRecord::Base
-      self.abstract_class = true
-
-      connects_to shards: {
-        default: { writing: :primary },
-        shard_one: { writing: :primary_shard_one }
-      }
+    ActiveRecord::Base.lease_connection.drop_table(:users, :posts)
     ```
 
-    Swap between shards in your controller / model code:
+    *Gabriel Sobrinho*
+
+*   Add support for PostgreSQL `IF NOT EXISTS` via the `:if_not_exists` option
+    on the `add_enum_value` method.
+
+    *Ariel Rzezak*
+
+*   When running `db:migrate` on a fresh database, load the database schema before running migrations.
+
+    *Andrew Novoselac*
+
+*   Fix an issue where `.left_outer_joins` used with multiple associations that have
+    the same child association but different parents does not join all parents.
+
+    Previously, using `.left_outer_joins` with the same child association would only join one of the parents.
+
+    Now it will correctly join both parents.
+
+    Fixes #41498.
+
+    *Garrett Blehm*
+
+*   Deprecate `unsigned_float` and `unsigned_decimal` short-hand column methods.
+
+    As of MySQL 8.0.17, the UNSIGNED attribute is deprecated for columns of type FLOAT, DOUBLE,
+    and DECIMAL. Consider using a simple CHECK constraint instead for such columns.
+
+    https://dev.mysql.com/doc/refman/8.0/en/numeric-type-syntax.html
+
+    *Ryuta Kamizono*
+
+*   Drop MySQL 5.5 support.
+
+    MySQL 5.5 is the only version that does not support datetime with precision,
+    which we have supported in the core. Now we support MySQL 5.6.4 or later, which
+    is the first version to support datetime with precision.
+
+    *Ryuta Kamizono*
+
+*   Make Active Record asynchronous queries compatible with transactional fixtures.
+
+    Previously transactional fixtures would disable asynchronous queries, because transactional
+    fixtures impose all queries use the same connection.
+
+    Now asynchronous queries will use the connection pinned by transactional fixtures, and behave
+    much closer to production.
+
+    *Jean Boussier*
+
+*   Deserialize binary data before decrypting
+
+    This ensures that we call `PG::Connection.unescape_bytea` on PostgreSQL before decryption.
+
+    *Donal McBreen*
+
+*   Ensure `ActiveRecord::Encryption.config` is always ready before access.
+
+    Previously, `ActiveRecord::Encryption` configuration was deferred until `ActiveRecord::Base`
+    was loaded. Therefore, accessing `ActiveRecord::Encryption.config` properties before
+    `ActiveRecord::Base` was loaded would give incorrect results.
+
+    `ActiveRecord::Encryption` now has its own loading hook so that its configuration is set as
+    soon as needed.
+
+    When `ActiveRecord::Base` is loaded, even lazily, it in turn triggers the loading of
+    `ActiveRecord::Encryption`, thus preserving the original behavior of having its config ready
+    before any use of `ActiveRecord::Base`.
+
+    *Maxime Réty*
+
+*   Add `TimeZoneConverter#==` method, so objects will be properly compared by
+    their type, scale, limit & precision.
+
+    Address #52699.
+
+    *Ruy Rocha*
+
+*   Add support for SQLite3 full-text-search and other virtual tables.
+
+    Previously, adding sqlite3 virtual tables messed up `schema.rb`.
+
+    Now, virtual tables can safely be added using `create_virtual_table`.
+
+    *Zacharias Knudsen*
+
+*   Support use of alternative database interfaces via the `database_cli` ActiveRecord configuration option.
 
     ```ruby
-    ActiveRecord::Base.connected_to(shard: :shard_one) do
-      # Read from shard one
+    Rails.application.configure do
+      config.active_record.database_cli = { postgresql: "pgcli" }
     end
     ```
 
-    The horizontal sharding API also supports read replicas. See guides for more details.
+    *T S Vallender*
 
-    *Eileen M. Uchitelle*, *John Crepezzi*
+*   Add support for dumping table inheritance and native partitioning table definitions for PostgeSQL adapter
 
-*   Deprecate `spec_name` in favor of `name` on database configurations.
+    *Justin Talbott*
 
-    The accessors for `spec_name` on `configs_for` and `DatabaseConfig` are deprecated. Please use `name` instead.
+*   Add support for `ActiveRecord::Point` type casts using `Hash` values
 
-    Deprecated behavior:
-
-    ```ruby
-    db_config = ActiveRecord::Base.configs_for(env_name: "development", spec_name: "primary")
-    db_config.spec_name
-    ```
-
-    New behavior:
+    This allows `ActiveRecord::Point` to be cast or serialized from a hash
+    with `:x` and `:y` keys of numeric values, mirroring the functionality of
+    existing casts for string and array values. Both string and symbol keys are
+    supported.
 
     ```ruby
-    db_config = ActiveRecord::Base.configs_for(env_name: "development", name: "primary")
-    db_config.name
+    class PostgresqlPoint < ActiveRecord::Base
+      attribute :x, :point
+      attribute :y, :point
+      attribute :z, :point
+    end
+
+    val = PostgresqlPoint.new({
+      x: '(12.34, -43.21)',
+      y: [12.34, '-43.21'],
+      z: {x: '12.34', y: -43.21}
+    })
+    ActiveRecord::Point.new(12.32, -43.21) == val.x == val.y == val.z
     ```
 
-    *Eileen M. Uchitelle*
+    *Stephen Drew*
 
-*   Add additional database-specific rake tasks for multi-database users.
+*   Replace `SQLite3::Database#busy_timeout` with `#busy_handler_timeout=`.
 
-    Previously, `rails db:create`, `rails db:drop`, and `rails db:migrate` were the only rails tasks that could operate on a single
-    database. For example:
+    Provides a non-GVL-blocking, fair retry interval busy handler implementation.
 
-    ```
-    rails db:create
-    rails db:create:primary
-    rails db:create:animals
-    rails db:drop
-    rails db:drop:primary
-    rails db:drop:animals
-    rails db:migrate
-    rails db:migrate:primary
-    rails db:migrate:animals
-    ```
+    *Stephen Margheim*
 
-    With these changes, `rails db:schema:dump`, `rails db:schema:load`, `rails db:structure:dump`, `rails db:structure:load` and
-    `rails db:test:prepare` can additionally operate on a single database. For example:
+*   SQLite3Adapter: Translate `SQLite3::BusyException` into `ActiveRecord::StatementTimeout`.
 
-    ```
-    rails db:schema:dump
-    rails db:schema:dump:primary
-    rails db:schema:dump:animals
-    rails db:schema:load
-    rails db:schema:load:primary
-    rails db:schema:load:animals
-    rails db:structure:dump
-    rails db:structure:dump:primary
-    rails db:structure:dump:animals
-    rails db:structure:load
-    rails db:structure:load:primary
-    rails db:structure:load:animals
-    rails db:test:prepare
-    rails db:test:prepare:primary
-    rails db:test:prepare:animals
-    ```
+    *Matthew Nguyen*
 
-    *Kyle Thompson*
+*   Include schema name in `enable_extension` statements in `db/schema.rb`.
 
-*   Add support for `strict_loading` mode on association declarations.
+    The schema dumper will now include the schema name in generated
+    `enable_extension` statements if they differ from the current schema.
 
-    Raise an error if attempting to load a record from an association that has been marked as `strict_loading` unless it was explicitly eager loaded.
-
-    Usage:
-
-    ```
-    >> class Developer < ApplicationRecord
-    >>   has_many :projects, strict_loading: true
-    >> end
-    >>
-    >> dev = Developer.first
-    >> dev.projects.first
-    => ActiveRecord::StrictLoadingViolationError: The projects association is marked as strict_loading and cannot be lazily loaded.
-    ```
-
-    *Kevin Deisz*
-
-*   Add support for `strict_loading` mode to prevent lazy loading of records.
-
-    Raise an error if a parent record is marked as `strict_loading` and attempts to lazily load its associations. This is useful for finding places you may want to preload an association and avoid additional queries.
-
-    Usage:
-
-    ```
-    >> dev = Developer.strict_loading.first
-    >> dev.audit_logs.to_a
-    => ActiveRecord::StrictLoadingViolationError: Developer is marked as strict_loading and AuditLog cannot be lazily loaded.
-    ```
-
-    *Eileen M. Uchitelle*, *Aaron Patterson*
-
-*   Add support for PostgreSQL 11+ partitioned indexes when using `upsert_all`.
-
-    *Sebastián Palma*
-
-*   Adds support for `if_not_exists` to `add_column` and `if_exists` to `remove_column`.
-
-    Applications can set their migrations to ignore exceptions raised when adding a column that already exists or when removing a column that does not exist.
-
-    Example Usage:
+    For example, if you have a migration:
 
     ```ruby
-    class AddColumnTitle < ActiveRecord::Migration[6.1]
-      def change
-        add_column :posts, :title, :string, if_not_exists: true
+    enable_extension "heroku_ext.pgcrypto"
+    enable_extension "pg_stat_statements"
+    ```
+
+    then the generated schema dump will also contain:
+
+    ```ruby
+    enable_extension "heroku_ext.pgcrypto"
+    enable_extension "pg_stat_statements"
+    ```
+
+    *Tony Novak*
+
+*   Fix `ActiveRecord::Encryption::EncryptedAttributeType#type` to return
+    actual cast type.
+
+    *Vasiliy Ermolovich*
+
+*   SQLite3Adapter: Bulk insert fixtures.
+
+    Previously one insert command was executed for each fixture, now they are
+    aggregated in a single bulk insert command.
+
+    *Lázaro Nixon*
+
+*   PostgreSQLAdapter: Allow `disable_extension` to be called with schema-qualified name.
+
+    For parity with `enable_extension`, the `disable_extension` method can be called with a schema-qualified
+    name (e.g. `disable_extension "myschema.pgcrypto"`). Note that PostgreSQL's `DROP EXTENSION` does not
+    actually take a schema name (unlike `CREATE EXTENSION`), so the resulting SQL statement will only name
+    the extension, e.g. `DROP EXTENSION IF EXISTS "pgcrypto"`.
+
+    *Tony Novak*
+
+*   Make `create_schema` / `drop_schema` reversible in migrations.
+
+    Previously, `create_schema` and `drop_schema` were irreversible migration operations.
+
+    *Tony Novak*
+
+*   Support batching using custom columns.
+
+    ```ruby
+    Product.in_batches(cursor: [:shop_id, :id]) do |relation|
+      # do something with relation
+    end
+    ```
+
+    *fatkodima*
+
+*   Use SQLite `IMMEDIATE` transactions when possible.
+
+    Transactions run against the SQLite3 adapter default to IMMEDIATE mode to improve concurrency support and avoid busy exceptions.
+
+    *Stephen Margheim*
+
+*   Raise specific exception when a connection is not defined.
+
+    The new `ConnectionNotDefined` exception provides connection name, shard and role accessors indicating the details of the connection that was requested.
+
+    *Hana Harencarova*, *Matthew Draper*
+
+*   Delete the deprecated constant `ActiveRecord::ImmutableRelation`.
+
+    *Xavier Noria*
+
+*   Fix duplicate callback execution when child autosaves parent with `has_one` and `belongs_to`.
+
+    Before, persisting a new child record with a new associated parent record would run `before_validation`,
+    `after_validation`, `before_save` and `after_save` callbacks twice.
+
+    Now, these callbacks are only executed once as expected.
+
+    *Joshua Young*
+
+*   `ActiveRecord::Encryption::Encryptor` now supports a `:compressor` option to customize the compression algorithm used.
+
+    ```ruby
+    module ZstdCompressor
+      def self.deflate(data)
+        Zstd.compress(data)
+      end
+
+      def self.inflate(data)
+        Zstd.decompress(data)
       end
     end
-    ```
 
-    ```ruby
-    class RemoveColumnTitle < ActiveRecord::Migration[6.1]
-      def change
-        remove_column :posts, :title, if_exists: true
-      end
+    class User
+      encrypts :name, compressor: ZstdCompressor
     end
     ```
 
-    *Eileen M. Uchitelle*
-
-*   Regexp-escape table name for MS SQL Server.
-
-    Add `Regexp.escape` to one method in ActiveRecord, so that table names with regular expression characters in them work as expected. Since MS SQL Server uses "[" and "]" to quote table and column names, and those characters are regular expression characters, methods like `pluck` and `select` fail in certain cases when used with the MS SQL Server adapter.
-
-    *Larry Reid*
-
-*   Store advisory locks on their own named connection.
-
-    Previously advisory locks were taken out against a connection when a migration started. This works fine in single database applications but doesn't work well when migrations need to open new connections which results in the lock getting dropped.
-
-    In order to fix this we are storing the advisory lock on a new connection with the connection specification name `AdvisoryLockBase`. The caveat is that we need to maintain at least 2 connections to a database while migrations are running in order to do this.
-
-    *Eileen M. Uchitelle*, *John Crepezzi*
-
-*   Allow schema cache path to be defined in the database configuration file.
-
-    For example:
-
-    ```yaml
-    development:
-      adapter: postgresql
-      database: blog_development
-      pool: 5
-      schema_cache_path: tmp/schema/main.yml
-    ```
-
-    *Katrina Owen*
-
-*   Deprecate `#remove_connection` in favor of `#remove_connection_pool` when called on the handler.
-
-    `#remove_connection` is deprecated in order to support returning a `DatabaseConfig` object instead of a `Hash`. Use `#remove_connection_pool`, `#remove_connection` will be removed in 6.2.
-
-    *Eileen M. Uchitelle*, *John Crepezzi*
-
-*   Deprecate `#default_hash` and it's alias `#[]` on database configurations.
-
-    Applications should use `configs_for`. `#default_hash` and `#[]` will be removed in 6.2.
-
-    *Eileen M. Uchitelle*, *John Crepezzi*
-
-*   Add scale support to `ActiveRecord::Validations::NumericalityValidator`.
-
-    *Gannon McGibbon*
-
-*   Find orphans by looking for missing relations through chaining `where.missing`:
-
-    Before:
+    You disable compression by passing `compress: false`.
 
     ```ruby
-    Post.left_joins(:author).where(authors: { id: nil })
+    class User
+      encrypts :name, compress: false
+    end
     ```
 
-    After:
+    *heka1024*
+
+*   Add condensed `#inspect` for `ConnectionPool`, `AbstractAdapter`, and
+    `DatabaseConfig`.
+
+    *Hartley McGuire*
+
+*   Add `.shard_keys`, `.sharded?`, & `.connected_to_all_shards` methods.
 
     ```ruby
-    Post.where.missing(:author)
+    class ShardedBase < ActiveRecord::Base
+        self.abstract_class = true
+
+        connects_to shards: {
+          shard_one: { writing: :shard_one },
+          shard_two: { writing: :shard_two }
+        }
+    end
+
+    class ShardedModel < ShardedBase
+    end
+
+    ShardedModel.shard_keys => [:shard_one, :shard_two]
+    ShardedModel.sharded? => true
+    ShardedBase.connected_to_all_shards { ShardedModel.current_shard } => [:shard_one, :shard_two]
     ```
 
-    *Tom Rossi*
+    *Nony Dutton*
 
-*   Ensure `:reading` connections always raise if a write is attempted.
+*   Add a `filter` option to `in_order_of` to prioritize certain values in the sorting without filtering the results
+    by these values.
 
-    Now Rails will raise an `ActiveRecord::ReadOnlyError` if any connection on the reading handler attempts to make a write. If your reading role needs to write you should name the role something other than `:reading`.
+    *Igor Depolli*
 
-    *Eileen M. Uchitelle*
+*   Fix an issue where the IDs reader method did not return expected results
+    for preloaded associations in models using composite primary keys.
 
-*   Deprecate "primary" as the connection_specification_name for ActiveRecord::Base.
+    *Jay Ang*
 
-    `"primary"` has been deprecated as the `connection_specification_name` for `ActiveRecord::Base` in favor of using `"ActiveRecord::Base"`. This change affects calls to `ActiveRecord::Base.connection_handler.retrieve_connection` and `ActiveRecord::Base.connection_handler.remove_connection`. If you're calling these methods with `"primary"`, please switch to `"ActiveRecord::Base"`.
+*   Allow to configure `strict_loading_mode` globally or within a model.
 
-    *Eileen M. Uchitelle*, *John Crepezzi*
+    Defaults to `:all`, can be changed to `:n_plus_one_only`.
 
-*   Add `ActiveRecord::Validations::NumericalityValidator` with
-    support for casting floats using a database columns' precision value.
+    *Garen Torikian*
 
-    *Gannon McGibbon*
+*   Add `ActiveRecord::Relation#readonly?`.
 
-*   Enforce fresh ETag header after a collection's contents change by adding
-    ActiveRecord::Relation#cache_key_with_version. This method will be used by
-    ActionController::ConditionalGet to ensure that when collection cache versioning
-    is enabled, requests using ConditionalGet don't return the same ETag header
-    after a collection is modified.
+    Reflects if the relation has been marked as readonly.
 
-    Fixes #38078.
+    *Theodor Tonum*
 
-    *Aaron Lipman*
+*   Improve `ActiveRecord::Store` to raise a descriptive exception if the column is not either
+    structured (e.g., PostgreSQL +hstore+/+json+, or MySQL +json+) or declared serializable via
+    `ActiveRecord.store`.
 
-*   Skip test database when running `db:create` or `db:drop` in development
-    with `DATABASE_URL` set.
+    Previously, a `NoMethodError` would be raised when the accessor was read or written:
 
-    *Brian Buchalter*
+        NoMethodError: undefined method `accessor' for an instance of ActiveRecord::Type::Text
 
-*   Don't allow mutations on the database configurations hash.
+    Now, a descriptive `ConfigurationError` is raised:
 
-    Freeze the configurations hash to disallow directly changing it. If applications need to change the hash, for example to create databases for parallelization, they should use the `DatabaseConfig` object directly.
+        ActiveRecord::ConfigurationError: the column 'metadata' has not been configured as a store.
+          Please make sure the column is declared serializable via 'ActiveRecord.store' or, if your
+          database supports it, use a structured column type like hstore or json.
 
-    Before:
+    *Mike Dalessio*
+
+*   Fix inference of association model on nested models with the same demodularized name.
+
+    E.g. with the following setup:
 
     ```ruby
-    @db_config = ActiveRecord::Base.configurations.configs_for(env_name: "test", spec_name: "primary")
-    @db_config.configuration_hash.merge!(idle_timeout: "0.02")
+    class Nested::Post < ApplicationRecord
+      has_one :post, through: :other
+    end
     ```
 
-    After:
+    Before, `#post` would infer the model as `Nested::Post`, but now it correctly infers `Post`.
+
+    *Joshua Young*
+
+*   Add public method for checking if a table is ignored by the schema cache.
+
+    Previously, an application would need to reimplement `ignored_table?` from the schema cache class to check if a table was set to be ignored. This adds a public method to support this and updates the schema cache to use that directly.
 
     ```ruby
-    @db_config = ActiveRecord::Base.configurations.configs_for(env_name: "test", spec_name: "primary")
-    config = @db_config.configuration_hash.merge(idle_timeout: "0.02")
-    db_config = ActiveRecord::DatabaseConfigurations::HashConfig.new(@db_config.env_name, @db_config.spec_name, config)
+    ActiveRecord.schema_cache_ignored_tables = ["developers"]
+    ActiveRecord.schema_cache_ignored_table?("developers")
+    => true
     ```
-
-    *Eileen M. Uchitelle*, *John Crepezzi*
-
-*   Remove `:connection_id` from the `sql.active_record` notification.
-
-    *Aaron Patterson*, *Rafael Mendonça França*
-
-*   The `:name` key will no longer be returned as part of `DatabaseConfig#configuration_hash`. Please use `DatabaseConfig#owner_name` instead.
-
-    *Eileen M. Uchitelle*, *John Crepezzi*
-
-*   ActiveRecord's `belongs_to_required_by_default` flag can now be set per model.
-
-    You can now opt-out/opt-in specific models from having their associations required
-    by default.
-
-    This change is meant to ease the process of migrating all your models to have
-    their association required.
-
-    *Edouard Chin*
-
-*   The `connection_config` method has been deprecated, please use `connection_db_config` instead which will return a `DatabaseConfigurations::DatabaseConfig` instead of a `Hash`.
-
-    *Eileen M. Uchitelle*, *John Crepezzi*
-
-*   Retain explicit selections on the base model after applying `includes` and `joins`.
-
-    Resolves #34889.
-
-    *Patrick Rebsch*
-
-*   The `database` kwarg is deprecated without replacement because it can't be used for sharding and creates an issue if it's used during a request. Applications that need to create new connections should use `connects_to` instead.
-
-    *Eileen M. Uchitelle*, *John Crepezzi*
-
-*   Allow attributes to be fetched from Arel node groupings.
-
-    *Jeff Emminger*, *Gannon McGibbon*
-
-*   A database URL can now contain a querystring value that contains an equal sign. This is needed to support passing PostgreSQL `options`.
-
-    *Joshua Flanagan*
-
-*   Calling methods like `establish_connection` with a `Hash` which is invalid (eg: no `adapter`) will now raise an error the same way as connections defined in `config/database.yml`.
-
-    *John Crepezzi*
-
-*   Specifying `implicit_order_column` now subsorts the records by primary key if available to ensure deterministic results.
-
-    *Paweł Urbanek*
-
-*   `where(attr => [])` now loads an empty result without making a query.
-
-    *John Hawthorn*
-
-*   Fixed the performance regression for `primary_keys` introduced MySQL 8.0.
-
-    *Hiroyuki Ishii*
-
-*   Add support for `belongs_to` to `has_many` inversing.
-
-    *Gannon McGibbon*
-
-*   Allow length configuration for `has_secure_token` method. The minimum length
-    is set at 24 characters.
-
-    Before:
-
-    ```ruby
-    has_secure_token :auth_token
-    ```
-
-    After:
-
-    ```ruby
-    has_secure_token :default_token             # 24 characters
-    has_secure_token :auth_token, length: 36    # 36 characters
-    has_secure_token :invalid_token, length: 12 # => ActiveRecord::SecureToken::MinimumLengthError
-    ```
-
-    *Bernardo de Araujo*
-
-*   Deprecate `DatabaseConfigurations#to_h`. These connection hashes are still available via `ActiveRecord::Base.configurations.configs_for`.
-
-    *Eileen Uchitelle*, *John Crepezzi*
-
-*   Add `DatabaseConfig#configuration_hash` to return database configuration hashes with symbol keys, and use all symbol-key configuration hashes internally. Deprecate `DatabaseConfig#config` which returns a String-keyed `Hash` with the same values.
-
-    *John Crepezzi*, *Eileen Uchitelle*
-
-*   Allow column names to be passed to `remove_index` positionally along with other options.
-
-    Passing other options can be necessary to make `remove_index` correctly reversible.
-
-    Before:
-
-        add_index    :reports, :report_id               # => works
-        add_index    :reports, :report_id, unique: true # => works
-        remove_index :reports, :report_id               # => works
-        remove_index :reports, :report_id, unique: true # => ArgumentError
-
-    After:
-
-        remove_index :reports, :report_id, unique: true # => works
-
-    *Eugene Kenny*
-
-*   Allow bulk `ALTER` statements to drop and recreate indexes with the same name.
-
-    *Eugene Kenny*
-
-*   `insert`, `insert_all`, `upsert`, and `upsert_all` now clear the query cache.
-
-    *Eugene Kenny*
-
-*   Call `while_preventing_writes` directly from `connected_to`.
-
-    In some cases application authors want to use the database switching middleware and make explicit calls with `connected_to`. It's possible for an app to turn off writes and not turn them back on by the time we call `connected_to(role: :writing)`.
-
-    This change allows apps to fix this by assuming if a role is writing we want to allow writes, except in the case it's explicitly turned off.
 
     *Eileen M. Uchitelle*
 
-*   Improve detection of ActiveRecord::StatementTimeout with mysql2 adapter in the edge case when the query is terminated during filesort.
-
-    *Kir Shatrov*
-
-*   Stop trying to read yaml file fixtures when loading Active Record fixtures.
-
-    *Gannon McGibbon*
-
-*   Deprecate `.reorder(nil)` with `.first` / `.first!` taking non-deterministic result.
-
-    To continue taking non-deterministic result, use `.take` / `.take!` instead.
-
-    *Ryuta Kamizono*
-
-*   Ensure custom PK types are casted in through reflection queries.
-
-    *Gannon McGibbon*
-
-*   Preserve user supplied joins order as much as possible.
-
-    Fixes #36761, #34328, #24281, #12953.
-
-    *Ryuta Kamizono*
-
-*   Allow `matches_regex` and `does_not_match_regexp` on the MySQL Arel visitor.
-
-    *James Pearson*
-
-*   Allow specifying fixtures to be ignored by setting `ignore` in YAML file's '_fixture' section.
-
-    *Tongfei Gao*
-
-*   Make the DATABASE_URL env variable only affect the primary connection. Add new env variables for multiple databases.
-
-    *John Crepezzi*, *Eileen Uchitelle*
-
-*   Add a warning for enum elements with 'not_' prefix.
-
-        class Foo
-          enum status: [:sent, :not_sent]
-        end
-
-    *Edu Depetris*
-
-*   Make currency symbols optional for money column type in PostgreSQL.
-
-    *Joel Schneider*
-
-*   Add support for beginless ranges, introduced in Ruby 2.7.
-
-    *Josh Goodall*
-
-*   Add database_exists? method to connection adapters to check if a database exists.
-
-    *Guilherme Mansur*
-
-*   Loading the schema for a model that has no `table_name` raises a `TableNotSpecified` error.
-
-    *Guilherme Mansur*, *Eugene Kenny*
-
-*   PostgreSQL: Fix GROUP BY with ORDER BY virtual count attribute.
-
-    Fixes #36022.
-
-    *Ryuta Kamizono*
-
-*   Make ActiveRecord `ConnectionPool.connections` method thread-safe.
-
-    Fixes #36465.
-
-    *Jeff Doering*
-
-*   Add support for multiple databases to `rails db:abort_if_pending_migrations`.
-
-    *Mark Lee*
-
-*   Fix sqlite3 collation parsing when using decimal columns.
-
-    *Martin R. Schuster*
-
-*   Fix invalid schema when primary key column has a comment.
-
-    Fixes #29966.
-
-    *Guilherme Goettems Schneider*
-
-*   Fix table comment also being applied to the primary key column.
-
-    *Guilherme Goettems Schneider*
-
-*   Allow generated `create_table` migrations to include or skip timestamps.
-
-    *Michael Duchemin*
-
-
-Please check [6-0-stable](https://github.com/rails/rails/blob/6-0-stable/activerecord/CHANGELOG.md) for previous changes.
+Please check [7-2-stable](https://github.com/rails/rails/blob/7-2-stable/activerecord/CHANGELOG.md) for previous changes.

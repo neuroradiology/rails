@@ -30,9 +30,7 @@ module ActiveRecord
         end
       end
 
-      def inspect
-        Kernel.instance_method(:inspect).bind(self).call
-      end
+      define_method(:inspect, Kernel.instance_method(:inspect))
 
       def changed_in_place?(raw_old_value, value)
         return false if value.nil?
@@ -55,14 +53,22 @@ module ActiveRecord
         coder.respond_to?(:object_class) && value.is_a?(coder.object_class)
       end
 
+      def serialized? # :nodoc:
+        true
+      end
+
       private
         def default_value?(value)
           value == coder.load(nil)
         end
 
         def encoded(value)
-          unless default_value?(value)
-            coder.dump(value)
+          return if default_value?(value)
+          payload = coder.dump(value)
+          if payload && @subtype.binary?
+            ActiveModel::Type::Binary::Data.new(payload)
+          else
+            payload
           end
         end
     end

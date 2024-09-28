@@ -1,30 +1,50 @@
 # frozen_string_literal: true
 
 require "active_support/core_ext/enumerable"
-require "active_support/core_ext/hash/indifferent_access"
-require "active_support/core_ext/string/filters"
+require "active_support/core_ext/module/delegation"
 require "active_support/parameter_filter"
 require "concurrent/map"
 
 module ActiveRecord
+  # = Active Record \Core
   module Core
     extend ActiveSupport::Concern
+    include ActiveModel::Access
 
     included do
       ##
       # :singleton-method:
       #
-      # Accepts a logger conforming to the interface of Log4r which is then
-      # passed on to any new database connections made and which can be
-      # retrieved on both a class and instance level by calling +logger+.
-      mattr_accessor :logger, instance_writer: false
+      # Accepts a logger conforming to the interface of Log4r or the default
+      # Ruby +Logger+ class, which is then passed on to any new database
+      # connections made. You can retrieve this logger by calling +logger+ on
+      # either an Active Record model class or an Active Record model instance.
+      class_attribute :logger, instance_writer: false
+
+      class_attribute :_destroy_association_async_job, instance_accessor: false, default: "ActiveRecord::DestroyAssociationAsyncJob"
+
+      # The job class used to destroy associations in the background.
+      def self.destroy_association_async_job
+        if _destroy_association_async_job.is_a?(String)
+          self._destroy_association_async_job = _destroy_association_async_job.constantize
+        end
+        _destroy_association_async_job
+      rescue NameError => error
+        raise NameError, "Unable to load destroy_association_async_job: #{error.message}"
+      end
+
+      singleton_class.alias_method :destroy_association_async_job=, :_destroy_association_async_job=
+      delegate :destroy_association_async_job, to: :class
 
       ##
       # :singleton-method:
       #
-      # Specifies if the methods calling database queries should be logged below
-      # their relevant queries. Defaults to false.
-      mattr_accessor :verbose_query_logs, instance_writer: false, default: false
+      # Specifies the maximum number of records that will be destroyed in a
+      # single background job by the <tt>dependent: :destroy_async</tt>
+      # association option. When +nil+ (default), all dependent records will be
+      # destroyed in a single background job. If specified, the records to be
+      # destroyed will be split into multiple background jobs.
+      class_attribute :destroy_association_async_batch_size, instance_writer: false, instance_predicate: false, default: nil
 
       ##
       # Contains the database configuration - as is typically stored in config/database.yml -
@@ -34,127 +54,189 @@ module ActiveRecord
       #
       #   development:
       #     adapter: sqlite3
-      #     database: db/development.sqlite3
+      #     database: storage/development.sqlite3
       #
       #   production:
       #     adapter: sqlite3
-      #     database: db/production.sqlite3
+      #     database: storage/production.sqlite3
       #
       # ...would result in ActiveRecord::Base.configurations to look like this:
       #
       #   #<ActiveRecord::DatabaseConfigurations:0x00007fd1acbdf800 @configurations=[
       #     #<ActiveRecord::DatabaseConfigurations::HashConfig:0x00007fd1acbded10 @env_name="development",
-      #       @name="primary", @config={adapter: "sqlite3", database: "db/development.sqlite3"}>,
+      #       @name="primary", @config={adapter: "sqlite3", database: "storage/development.sqlite3"}>,
       #     #<ActiveRecord::DatabaseConfigurations::HashConfig:0x00007fd1acbdea90 @env_name="production",
-      #       @name="primary", @config={adapter: "sqlite3", database: "db/production.sqlite3"}>
+      #       @name="primary", @config={adapter: "sqlite3", database: "storage/production.sqlite3"}>
       #   ]>
       def self.configurations=(config)
         @@configurations = ActiveRecord::DatabaseConfigurations.new(config)
       end
       self.configurations = {}
 
-      # Returns fully resolved ActiveRecord::DatabaseConfigurations object
+      # Returns a fully resolved ActiveRecord::DatabaseConfigurations object.
       def self.configurations
         @@configurations
       end
 
       ##
       # :singleton-method:
-      # Determines whether to use Time.utc (using :utc) or Time.local (using :local) when pulling
-      # dates and times from the database. This is set to :utc by default.
-      mattr_accessor :default_timezone, instance_writer: false, default: :utc
-
-      ##
-      # :singleton-method:
-      # Specifies the format to use when dumping the database schema with Rails'
-      # Rakefile. If :sql, the schema is dumped as (potentially database-
-      # specific) SQL statements. If :ruby, the schema is dumped as an
-      # ActiveRecord::Schema file which can be loaded into any database that
-      # supports migrations. Use :ruby if you want to have different database
-      # adapters for, e.g., your development and test environments.
-      mattr_accessor :schema_format, instance_writer: false, default: :ruby
-
-      ##
-      # :singleton-method:
-      # Specifies if an error should be raised if the query has an order being
-      # ignored when doing batch queries. Useful in applications where the
-      # scope being ignored is error-worthy, rather than a warning.
-      mattr_accessor :error_on_ignored_order, instance_writer: false, default: false
-
-      # :singleton-method:
-      # Specify the behavior for unsafe raw query methods. Values are as follows
-      #   deprecated - Warnings are logged when unsafe raw SQL is passed to
-      #                query methods.
-      #   disabled   - Unsafe raw SQL passed to query methods results in
-      #                UnknownAttributeReference exception.
-      mattr_accessor :allow_unsafe_raw_sql, instance_writer: false, default: :deprecated
-
-      ##
-      # :singleton-method:
-      # Specify whether or not to use timestamps for migration versions
-      mattr_accessor :timestamped_migrations, instance_writer: false, default: true
-
-      ##
-      # :singleton-method:
-      # Specify whether schema dump should happen at the end of the
-      # db:migrate rails command. This is true by default, which is useful for the
-      # development environment. This should ideally be false in the production
-      # environment where dumping schema is rarely needed.
-      mattr_accessor :dump_schema_after_migration, instance_writer: false, default: true
-
-      ##
-      # :singleton-method:
-      # Specifies which database schemas to dump when calling db:structure:dump.
-      # If the value is :schema_search_path (the default), any schemas listed in
-      # schema_search_path are dumped. Use :all to dump all schemas regardless
-      # of schema_search_path, or a string of comma separated schemas for a
-      # custom list.
-      mattr_accessor :dump_schemas, instance_writer: false, default: :schema_search_path
-
-      ##
-      # :singleton-method:
-      # Specify a threshold for the size of query result sets. If the number of
-      # records in the set exceeds the threshold, a warning is logged. This can
-      # be used to identify queries which load thousands of records and
-      # potentially cause memory bloat.
-      mattr_accessor :warn_on_records_fetched_greater_than, instance_writer: false
-
-      mattr_accessor :maintain_test_schema, instance_accessor: false
+      # Force enumeration of all columns in SELECT statements.
+      # e.g. <tt>SELECT first_name, last_name FROM ...</tt> instead of <tt>SELECT * FROM ...</tt>
+      # This avoids +PreparedStatementCacheExpired+ errors when a column is added
+      # to the database while the app is running.
+      class_attribute :enumerate_columns_in_select_statements, instance_accessor: false, default: false
 
       class_attribute :belongs_to_required_by_default, instance_accessor: false
 
-      mattr_accessor :connection_handlers, instance_accessor: false, default: {}
+      class_attribute :strict_loading_by_default, instance_accessor: false, default: false
+      class_attribute :strict_loading_mode, instance_accessor: false, default: :all
 
-      mattr_accessor :writing_role, instance_accessor: false, default: :writing
+      class_attribute :has_many_inversing, instance_accessor: false, default: false
 
-      mattr_accessor :reading_role, instance_accessor: false, default: :reading
-
-      mattr_accessor :has_many_inversing, instance_accessor: false, default: false
+      class_attribute :run_commit_callbacks_on_first_saved_instances_in_transaction, instance_accessor: false, default: true
 
       class_attribute :default_connection_handler, instance_writer: false
 
-      class_attribute :default_pool_key, instance_writer: false
+      class_attribute :default_role, instance_writer: false
+
+      class_attribute :default_shard, instance_writer: false
+
+      class_attribute :shard_selector, instance_accessor: false, default: nil
+
+      # Specifies the attributes that will be included in the output of the #inspect method
+      class_attribute :attributes_for_inspect, instance_accessor: false, default: :all
+
+      def self.application_record_class? # :nodoc:
+        if ActiveRecord.application_record_class
+          self == ActiveRecord.application_record_class
+        else
+          if defined?(ApplicationRecord) && self == ApplicationRecord
+            true
+          end
+        end
+      end
 
       self.filter_attributes = []
 
       def self.connection_handler
-        Thread.current.thread_variable_get(:ar_connection_handler) || default_connection_handler
+        ActiveSupport::IsolatedExecutionState[:active_record_connection_handler] || default_connection_handler
       end
 
       def self.connection_handler=(handler)
-        Thread.current.thread_variable_set(:ar_connection_handler, handler)
+        ActiveSupport::IsolatedExecutionState[:active_record_connection_handler] = handler
       end
 
-      def self.current_pool_key
-        Thread.current.thread_variable_get(:ar_pool_key) || default_pool_key
+      def self.asynchronous_queries_session # :nodoc:
+        asynchronous_queries_tracker.current_session
       end
 
-      def self.current_pool_key=(pool_key)
-        Thread.current.thread_variable_set(:ar_pool_key, pool_key)
+      def self.asynchronous_queries_tracker # :nodoc:
+        ActiveSupport::IsolatedExecutionState[:active_record_asynchronous_queries_tracker] ||= \
+          AsynchronousQueriesTracker.new
+      end
+
+      # Returns the symbol representing the current connected role.
+      #
+      #   ActiveRecord::Base.connected_to(role: :writing) do
+      #     ActiveRecord::Base.current_role #=> :writing
+      #   end
+      #
+      #   ActiveRecord::Base.connected_to(role: :reading) do
+      #     ActiveRecord::Base.current_role #=> :reading
+      #   end
+      def self.current_role
+        connected_to_stack.reverse_each do |hash|
+          return hash[:role] if hash[:role] && hash[:klasses].include?(Base)
+          return hash[:role] if hash[:role] && hash[:klasses].include?(connection_class_for_self)
+        end
+
+        default_role
+      end
+
+      # Returns the symbol representing the current connected shard.
+      #
+      #   ActiveRecord::Base.connected_to(role: :reading) do
+      #     ActiveRecord::Base.current_shard #=> :default
+      #   end
+      #
+      #   ActiveRecord::Base.connected_to(role: :writing, shard: :one) do
+      #     ActiveRecord::Base.current_shard #=> :one
+      #   end
+      def self.current_shard
+        connected_to_stack.reverse_each do |hash|
+          return hash[:shard] if hash[:shard] && hash[:klasses].include?(Base)
+          return hash[:shard] if hash[:shard] && hash[:klasses].include?(connection_class_for_self)
+        end
+
+        default_shard
+      end
+
+      # Returns the symbol representing the current setting for
+      # preventing writes.
+      #
+      #   ActiveRecord::Base.connected_to(role: :reading) do
+      #     ActiveRecord::Base.current_preventing_writes #=> true
+      #   end
+      #
+      #   ActiveRecord::Base.connected_to(role: :writing) do
+      #     ActiveRecord::Base.current_preventing_writes #=> false
+      #   end
+      def self.current_preventing_writes
+        connected_to_stack.reverse_each do |hash|
+          return hash[:prevent_writes] if !hash[:prevent_writes].nil? && hash[:klasses].include?(Base)
+          return hash[:prevent_writes] if !hash[:prevent_writes].nil? && hash[:klasses].include?(connection_class_for_self)
+        end
+
+        false
+      end
+
+      def self.connected_to_stack # :nodoc:
+        if connected_to_stack = ActiveSupport::IsolatedExecutionState[:active_record_connected_to_stack]
+          connected_to_stack
+        else
+          connected_to_stack = Concurrent::Array.new
+          ActiveSupport::IsolatedExecutionState[:active_record_connected_to_stack] = connected_to_stack
+          connected_to_stack
+        end
+      end
+
+      def self.connection_class=(b) # :nodoc:
+        @connection_class = b
+      end
+
+      def self.connection_class # :nodoc:
+        @connection_class ||= false
+      end
+
+      def self.connection_class? # :nodoc:
+        self.connection_class
+      end
+
+      def self.connection_class_for_self # :nodoc:
+        klass = self
+
+        until klass == Base
+          break if klass.connection_class?
+          klass = klass.superclass
+        end
+
+        klass
       end
 
       self.default_connection_handler = ConnectionAdapters::ConnectionHandler.new
-      self.default_pool_key = :default
+      self.default_role = ActiveRecord.writing_role
+      self.default_shard = :default
+
+      def self.strict_loading_violation!(owner:, reflection:) # :nodoc:
+        case ActiveRecord.action_on_strict_loading_violation
+        when :raise
+          message = reflection.strict_loading_violation_message(owner)
+          raise ActiveRecord::StrictLoadingViolationError.new(message)
+        when :log
+          name = "strict_loading_violation.active_record"
+          ActiveSupport::Notifications.instrument(name, owner: owner, reflection: reflection)
+        end
+      end
     end
 
     module ClassMethods
@@ -162,65 +244,68 @@ module ActiveRecord
         @find_by_statement_cache = { true => Concurrent::Map.new, false => Concurrent::Map.new }
       end
 
-      def inherited(child_class) # :nodoc:
-        # initialize cache at class definition for thread safety
-        child_class.initialize_find_by_cache
-        super
-      end
-
       def find(*ids) # :nodoc:
         # We don't have cache keys for this stuff yet
         return super unless ids.length == 1
-        return super if block_given? ||
-                        primary_key.nil? ||
-                        scope_attributes? ||
-                        columns_hash.key?(inheritance_column) && !base_class?
+        return super if block_given? || primary_key.nil? || scope_attributes?
 
         id = ids.first
 
         return super if StatementCache.unsupported_value?(id)
 
-        key = primary_key
-
-        statement = cached_find_by_statement(key) { |params|
-          where(key => params.bind).limit(1)
-        }
-
-        record = statement.execute([id], connection)&.first
-        unless record
-          raise RecordNotFound.new("Couldn't find #{name} with '#{key}'=#{id}", name, key, id)
-        end
-        record
+        cached_find_by([primary_key], [id]) ||
+          raise(RecordNotFound.new("Couldn't find #{name} with '#{primary_key}'=#{id}", name, primary_key, id))
       end
 
       def find_by(*args) # :nodoc:
-        return super if scope_attributes? || reflect_on_all_aggregations.any? ||
-                        columns_hash.key?(inheritance_column) && !base_class?
+        return super if scope_attributes?
 
         hash = args.first
+        return super unless Hash === hash
 
-        return super if !(Hash === hash) || hash.values.any? { |v|
-          StatementCache.unsupported_value?(v)
-        }
+        hash = hash.each_with_object({}) do |(key, value), h|
+          key = key.to_s
+          key = attribute_aliases[key] || key
 
-        # We can't cache Post.find_by(author: david) ...yet
-        return super unless hash.keys.all? { |k| columns_hash.has_key?(k.to_s) }
+          return super if reflect_on_aggregation(key)
 
-        keys = hash.keys
+          reflection = _reflect_on_association(key)
 
-        statement = cached_find_by_statement(keys) { |params|
-          wheres = keys.index_with { params.bind }
-          where(wheres).limit(1)
-        }
-        begin
-          statement.execute(hash.values, connection)&.first
-        rescue TypeError
-          raise ActiveRecord::StatementInvalid
+          if !reflection
+            value = value.id if value.respond_to?(:id)
+          elsif reflection.belongs_to? && !reflection.polymorphic?
+            key = reflection.join_foreign_key
+            pkey = reflection.join_primary_key
+
+            if pkey.is_a?(Array)
+              if pkey.all? { |attribute| value.respond_to?(attribute) }
+                value = pkey.map do |attribute|
+                  if attribute == "id"
+                    value.id_value
+                  else
+                    value.public_send(attribute)
+                  end
+                end
+                composite_primary_key = true
+              end
+            else
+              value = value.public_send(pkey) if value.respond_to?(pkey)
+            end
+          end
+
+          if !composite_primary_key &&
+            (!columns_hash.key?(key) || StatementCache.unsupported_value?(value))
+            return super
+          end
+
+          h[key] = value
         end
+
+        cached_find_by(hash.keys, hash.values)
       end
 
       def find_by!(*args) # :nodoc:
-        find_by(*args) || raise(RecordNotFound.new("Couldn't find #{name}", name))
+        find_by(*args) || where(*args).raise_record_not_found_exception!
       end
 
       def initialize_generated_modules # :nodoc:
@@ -239,24 +324,38 @@ module ActiveRecord
 
       # Returns columns which shouldn't be exposed while calling +#inspect+.
       def filter_attributes
-        if defined?(@filter_attributes)
-          @filter_attributes
-        else
+        if @filter_attributes.nil?
           superclass.filter_attributes
+        else
+          @filter_attributes
         end
       end
 
       # Specifies columns which shouldn't be exposed while calling +#inspect+.
-      attr_writer :filter_attributes
+      def filter_attributes=(filter_attributes)
+        @inspection_filter = nil
+        @filter_attributes = filter_attributes
+      end
+
+      def inspection_filter # :nodoc:
+        if @filter_attributes.nil?
+          superclass.inspection_filter
+        else
+          @inspection_filter ||= begin
+            mask = InspectionMask.new(ActiveSupport::ParameterFilter::FILTERED)
+            ActiveSupport::ParameterFilter.new(@filter_attributes, mask: mask)
+          end
+        end
+      end
 
       # Returns a string like 'Post(id:integer, title:string, body:text)'
       def inspect # :nodoc:
-        if self == Base
+        if self == Base || singleton_class?
           super
         elsif abstract_class?
           "#{super}(abstract)"
-        elsif !connected?
-          "#{super} (call '#{super}.connection' to establish a connection)"
+        elsif !schema_loaded? && !connected?
+          "#{super} (call '#{super}.load_schema' to load schema informations)"
         elsif table_exists?
           attr_list = attribute_types.map { |name, type| "#{name}: #{type.type}" } * ", "
           "#{super}(#{attr_list})"
@@ -265,24 +364,9 @@ module ActiveRecord
         end
       end
 
-      # Overwrite the default class equality method to provide support for decorated models.
-      def ===(object) # :nodoc:
-        object.is_a?(self)
-      end
-
-      # Returns an instance of <tt>Arel::Table</tt> loaded with the current table name.
-      #
-      #   class Post < ActiveRecord::Base
-      #     scope :published_and_commented, -> { published.and(arel_table[:comments_count].gt(0)) }
-      #   end
+      # Returns an instance of +Arel::Table+ loaded with the current table name.
       def arel_table # :nodoc:
-        @arel_table ||= Arel::Table.new(table_name, type_caster: type_caster)
-      end
-
-      def arel_attribute(name, table = arel_table) # :nodoc:
-        name = name.to_s
-        name = attribute_aliases[name] || name
-        table[name]
+        @arel_table ||= Arel::Table.new(table_name, klass: self)
       end
 
       def predicate_builder # :nodoc:
@@ -293,14 +377,32 @@ module ActiveRecord
         TypeCaster::Map.new(self)
       end
 
-      def _internal? # :nodoc:
-        false
+      def cached_find_by_statement(connection, key, &block) # :nodoc:
+        cache = @find_by_statement_cache[connection.prepared_statements]
+        cache.compute_if_absent(key) { StatementCache.create(connection, &block) }
       end
 
       private
-        def cached_find_by_statement(key, &block)
-          cache = @find_by_statement_cache[connection.prepared_statements]
-          cache.compute_if_absent(key) { StatementCache.create(connection, &block) }
+        def inherited(subclass)
+          super
+
+          # initialize cache at class definition for thread safety
+          subclass.initialize_find_by_cache
+          unless subclass.base_class?
+            klass = self
+            until klass.base_class?
+              klass.initialize_find_by_cache
+              klass = klass.superclass
+            end
+          end
+
+          subclass.class_eval do
+            @arel_table = nil
+            @predicate_builder = nil
+            @inspection_filter = nil
+            @filter_attributes ||= nil
+            @generated_association_methods ||= nil
+          end
         end
 
         def relation
@@ -308,7 +410,6 @@ module ActiveRecord
 
           if finder_needs_type_condition? && !ignore_default_scope?
             relation.where!(type_condition)
-            relation.create_with!(inheritance_column.to_s => sti_name)
           else
             relation
           end
@@ -317,6 +418,27 @@ module ActiveRecord
         def table_metadata
           TableMetadata.new(self, arel_table)
         end
+
+        def cached_find_by(keys, values)
+          with_connection do |connection|
+            statement = cached_find_by_statement(connection, keys) { |params|
+              wheres = keys.index_with do |key|
+                if key.is_a?(Array)
+                  [key.map { params.bind }]
+                else
+                  params.bind
+                end
+              end
+              where(wheres).limit(1)
+            }
+
+            statement.execute(values.flatten, connection, allow_retry: true).then do |r|
+              r.first
+            rescue TypeError
+              raise ActiveRecord::StatementInvalid
+            end
+          end
+        end
     end
 
     # New objects can be instantiated as either empty (pass no construction parameter) or pre-set with
@@ -324,7 +446,7 @@ module ActiveRecord
     # In both instances, valid attribute keys are determined by the column names of the associated table --
     # hence you can't have attributes that aren't part of the table columns.
     #
-    # ==== Example:
+    # ==== Example
     #   # Instantiates a single new object
     #   User.new(first_name: 'Jamie')
     def initialize(attributes = nil)
@@ -334,7 +456,7 @@ module ActiveRecord
       init_internals
       initialize_internals_callback
 
-      assign_attributes(attributes) if attributes
+      super
 
       yield self if block_given?
       _run_initialize_callbacks
@@ -355,7 +477,7 @@ module ActiveRecord
     #   post.init_with(coder)
     #   post.title # => 'hello world'
     def init_with(coder, &block)
-      coder = LegacyYamlAdapter.convert(self.class, coder)
+      coder = LegacyYamlAdapter.convert(coder)
       attributes = self.class.yaml_encoder.decode(coder)
       init_with_attributes(attributes, coder["new_record"], &block)
     end
@@ -402,19 +524,24 @@ module ActiveRecord
     # only, not its associations. The extent of a "deep" copy is application
     # specific and is therefore left to the application to implement according
     # to its need.
-    # The dup method does not preserve the timestamps (created|updated)_(at|on).
+    # The dup method does not preserve the timestamps (created|updated)_(at|on)
+    # and locking column.
 
     ##
     def initialize_dup(other) # :nodoc:
       @attributes = @attributes.deep_dup
-      @attributes.reset(@primary_key)
+      if self.class.composite_primary_key?
+        @primary_key.each { |key| @attributes.reset(key) }
+      else
+        @attributes.reset(@primary_key)
+      end
 
       _run_initialize_callbacks
 
       @new_record               = true
+      @previously_new_record    = false
       @destroyed                = false
       @_start_transaction_state = nil
-      @transaction_state        = nil
 
       super
     end
@@ -437,6 +564,35 @@ module ActiveRecord
       coder["active_record_yaml_version"] = 2
     end
 
+    ##
+    # :method: slice
+    #
+    # :call-seq: slice(*methods)
+    #
+    # Returns a hash of the given methods with their names as keys and returned
+    # values as values.
+    #
+    #   topic = Topic.new(title: "Budget", author_name: "Jason")
+    #   topic.slice(:title, :author_name)
+    #   => { "title" => "Budget", "author_name" => "Jason" }
+    #
+    #--
+    # Implemented by ActiveModel::Access#slice.
+
+    ##
+    # :method: values_at
+    #
+    # :call-seq: values_at(*methods)
+    #
+    # Returns an array of the values returned by the given methods.
+    #
+    #   topic = Topic.new(title: "Budget", author_name: "Jason")
+    #   topic.values_at(:title, :author_name)
+    #   => ["Budget", "Jason"]
+    #
+    #--
+    # Implemented by ActiveModel::Access#values_at.
+
     # Returns true if +comparison_object+ is the same exact object, or +comparison_object+
     # is of the same type and +self+ has an ID and it is equal to +comparison_object.id+.
     #
@@ -449,7 +605,7 @@ module ActiveRecord
     def ==(comparison_object)
       super ||
         comparison_object.instance_of?(self.class) &&
-        !id.nil? &&
+        primary_key_values_present? &&
         comparison_object.id == id
     end
     alias :eql? :==
@@ -457,7 +613,9 @@ module ActiveRecord
     # Delegates to id in order to allow two records of the same type and id to work with something like:
     #   [ Person.find(1), Person.find(2), Person.find(3) ] & [ Person.find(1), Person.find(4) ] # => [ Person.find(1) ]
     def hash
-      if id
+      id = self.id
+
+      if primary_key_values_present?
         self.class.hash ^ id.hash
       else
         super
@@ -474,7 +632,6 @@ module ActiveRecord
 
     # Returns +true+ if the attributes hash has been frozen.
     def frozen?
-      sync_with_transaction_state if @transaction_state&.finalized?
       @attributes.frozen?
     end
 
@@ -495,21 +652,71 @@ module ActiveRecord
       false
     end
 
-    # Returns +true+ if the record is read only. Records loaded through joins with piggy-back
-    # attributes will be marked as read only since they cannot be saved.
+    # Returns +true+ if the record is read only.
     def readonly?
       @readonly
     end
 
+    # Returns +true+ if the record is in strict_loading mode.
     def strict_loading?
       @strict_loading
     end
 
-    def strict_loading!
-      @strict_loading = true
+    # Sets the record to strict_loading mode. This will raise an error
+    # if the record tries to lazily load an association.
+    #
+    #   user = User.first
+    #   user.strict_loading! # => true
+    #   user.address.city
+    #   => ActiveRecord::StrictLoadingViolationError
+    #   user.comments.to_a
+    #   => ActiveRecord::StrictLoadingViolationError
+    #
+    # ==== Parameters
+    #
+    # * +value+ - Boolean specifying whether to enable or disable strict loading.
+    # * <tt>:mode</tt> - Symbol specifying strict loading mode. Defaults to :all. Using
+    #   :n_plus_one_only mode will only raise an error if an association that
+    #   will lead to an n plus one query is lazily loaded.
+    #
+    # ==== Examples
+    #
+    #   user = User.first
+    #   user.strict_loading!(false) # => false
+    #   user.address.city # => "Tatooine"
+    #   user.comments.to_a # => [#<Comment:0x00...]
+    #
+    #   user.strict_loading!(mode: :n_plus_one_only)
+    #   user.address.city # => "Tatooine"
+    #   user.comments.to_a # => [#<Comment:0x00...]
+    #   user.comments.first.ratings.to_a
+    #   => ActiveRecord::StrictLoadingViolationError
+    def strict_loading!(value = true, mode: :all)
+      unless [:all, :n_plus_one_only].include?(mode)
+        raise ArgumentError, "The :mode option must be one of [:all, :n_plus_one_only] but #{mode.inspect} was provided."
+      end
+
+      @strict_loading_mode = mode
+      @strict_loading = value
+    end
+
+    attr_reader :strict_loading_mode
+
+    # Returns +true+ if the record uses strict_loading with +:n_plus_one_only+ mode enabled.
+    def strict_loading_n_plus_one_only?
+      @strict_loading_mode == :n_plus_one_only
+    end
+
+    # Returns +true+ if the record uses strict_loading with +:all+ mode enabled.
+    def strict_loading_all?
+      @strict_loading_mode == :all
     end
 
     # Marks this record as read only.
+    #
+    #   customer = Customer.first
+    #   customer.readonly!
+    #   customer.save # Raises an ActiveRecord::ReadOnlyRecord
     def readonly!
       @readonly = true
     end
@@ -518,28 +725,14 @@ module ActiveRecord
       self.class.connection_handler
     end
 
-    # Returns the contents of the record as a nicely formatted string.
+    # Returns the attributes specified by <tt>.attributes_for_inspect</tt> as a nicely formatted string.
     def inspect
-      # We check defined?(@attributes) not to issue warnings if the object is
-      # allocated but not initialized.
-      inspection = if defined?(@attributes) && @attributes
-        self.class.attribute_names.collect do |name|
-          if has_attribute?(name)
-            attr = _read_attribute(name)
-            value = if attr.nil?
-              attr.inspect
-            else
-              attr = format_for_inspect(attr)
-              inspection_filter.filter_param(name, attr)
-            end
-            "#{name}: #{value}"
-          end
-        end.compact.join(", ")
-      else
-        "not initialized"
-      end
+      inspect_with_attributes(attributes_for_inspect)
+    end
 
-      "#<#{self.class} #{inspection}>"
+    # Returns the full contents of the record as a nicely formatted string.
+    def full_inspect
+      inspect_with_attributes(all_attributes_for_inspect)
     end
 
     # Takes a PP and prettily prints this record to it, allowing you to get a nice result from <tt>pp record</tt>
@@ -547,17 +740,17 @@ module ActiveRecord
     def pretty_print(pp)
       return super if custom_inspect_method_defined?
       pp.object_address_group(self) do
-        if defined?(@attributes) && @attributes
-          attr_names = self.class.attribute_names.select { |name| has_attribute?(name) }
+        if @attributes
+          attr_names = attributes_for_inspect.select { |name| _has_attribute?(name.to_s) }
           pp.seplist(attr_names, proc { pp.text "," }) do |attr_name|
+            attr_name = attr_name.to_s
             pp.breakable " "
             pp.group(1) do
               pp.text attr_name
               pp.text ":"
               pp.breakable
-              value = _read_attribute(attr_name)
-              value = inspection_filter.filter_param(attr_name, value) unless value.nil?
-              pp.pp value
+              value = attribute_for_inspect(attr_name)
+              pp.text value
             end
           end
         else
@@ -565,11 +758,6 @@ module ActiveRecord
           pp.text "not initialized"
         end
       end
-    end
-
-    # Returns a hash of the given methods with their names as keys and returned values as values.
-    def slice(*methods)
-      Hash[methods.flatten.map! { |method| [method, public_send(method)] }].with_indifferent_access
     end
 
     private
@@ -586,16 +774,20 @@ module ActiveRecord
       end
 
       def init_internals
-        @primary_key              = self.class.primary_key
         @readonly                 = false
+        @previously_new_record    = false
         @destroyed                = false
         @marked_for_destruction   = false
         @destroyed_by_association = nil
         @_start_transaction_state = nil
-        @transaction_state        = nil
-        @strict_loading           = false
 
-        self.class.define_attribute_methods
+        klass = self.class
+
+        @primary_key         = klass.primary_key
+        @strict_loading      = klass.strict_loading_by_default
+        @strict_loading_mode = klass.strict_loading_mode
+
+        klass.define_attribute_methods
       end
 
       def initialize_internals_callback
@@ -613,10 +805,32 @@ module ActiveRecord
       private_constant :InspectionMask
 
       def inspection_filter
-        @inspection_filter ||= begin
-          mask = InspectionMask.new(ActiveSupport::ParameterFilter::FILTERED)
-          ActiveSupport::ParameterFilter.new(self.class.filter_attributes, mask: mask)
+        self.class.inspection_filter
+      end
+
+      def inspect_with_attributes(attributes_to_list)
+        inspection = if @attributes
+          attributes_to_list.filter_map do |name|
+            name = name.to_s
+            if _has_attribute?(name)
+              "#{name}: #{attribute_for_inspect(name)}"
+            end
+          end.join(", ")
+        else
+          "not initialized"
         end
+
+        "#<#{self.class} #{inspection}>"
+      end
+
+      def attributes_for_inspect
+        self.class.attributes_for_inspect == :all ? all_attributes_for_inspect : self.class.attributes_for_inspect
+      end
+
+      def all_attributes_for_inspect
+        return [] unless @attributes
+
+        attribute_names
       end
   end
 end

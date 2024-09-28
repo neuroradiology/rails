@@ -1,31 +1,73 @@
-*   `*_previously_changed?` accepts `:from` and `:to` keyword arguments like `*_changed?`.
+## Rails 8.0.0.beta1 (September 26, 2024) ##
 
-        topic.update!(status: :archived)
-        topic.status_previously_changed?(from: "active", to: "archived")
-        # => true
+*   Make `ActiveModel::Serialization#read_attribute_for_serialization` public
 
-    *George Claghorn*
+    *Sean Doyle*
 
-*   Raise FrozenError when trying to write attributes that aren't backed by the database on an object that is frozen:
+*   Add a default token generator for password reset tokens when using `has_secure_password`.
 
-        class Animal
-          include ActiveModel::Attributes
-          attribute :age
-        end
+    ```ruby
+    class User < ApplicationRecord
+      has_secure_password
+    end
 
-        animal = Animal.new
-        animal.freeze
-        animal.age = 25 # => FrozenError, "can't modify a frozen Animal"
+    user = User.create!(name: "david", password: "123", password_confirmation: "123")
+    token = user.password_reset_token
+    User.find_by_password_reset_token(token) # returns user
 
-    *Josh Brody*
+    # 16 minutes later...
+    User.find_by_password_reset_token(token) # returns nil
 
-*   Add `*_previously_was` attribute methods when dirty tracking. Example:
-
-        pirate.update(catchphrase: "Ahoy!")
-        pirate.previous_changes["catchphrase"] # => ["Thar She Blows!", "Ahoy!"]
-        pirate.catchphrase_previously_was # => "Thar She Blows!"
+    # raises ActiveSupport::MessageVerifier::InvalidSignature since the token is expired
+    User.find_by_password_reset_token!(token)
+    ```
 
     *DHH*
 
+*   Add a load hook `active_model_translation` for `ActiveModel::Translation`.
 
-Please check [6-0-stable](https://github.com/rails/rails/blob/6-0-stable/activemodel/CHANGELOG.md) for previous changes.
+    *Shouichi Kamiya*
+
+*   Add `raise_on_missing_translations` option to `ActiveModel::Translation`.
+    When the option is set, `human_attribute_name` raises an error if a translation of the given attribute is missing.
+
+    ```ruby
+    # ActiveModel::Translation.raise_on_missing_translations = false
+    Post.human_attribute_name("title")
+    => "Title"
+
+    # ActiveModel::Translation.raise_on_missing_translations = true
+    Post.human_attribute_name("title")
+    => Translation missing. Options considered were: (I18n::MissingTranslationData)
+        - en.activerecord.attributes.post.title
+        - en.attributes.title
+
+                raise exception.respond_to?(:to_exception) ? exception.to_exception : exception
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ```
+
+    *Shouichi Kamiya*
+
+*   Introduce `ActiveModel::AttributeAssignment#attribute_writer_missing`
+
+    Provide instances with an opportunity to gracefully handle assigning to an
+    unknown attribute:
+
+    ```ruby
+    class Rectangle
+      include ActiveModel::AttributeAssignment
+
+      attr_accessor :length, :width
+
+      def attribute_writer_missing(name, value)
+        Rails.logger.warn "Tried to assign to unknown attribute #{name}"
+      end
+    end
+
+    rectangle = Rectangle.new
+    rectangle.assign_attributes(height: 10) # => Logs "Tried to assign to unknown attribute 'height'"
+    ```
+
+    *Sean Doyle*
+
+Please check [7-2-stable](https://github.com/rails/rails/blob/7-2-stable/activemodel/CHANGELOG.md) for previous changes.

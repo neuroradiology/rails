@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+# :markup: markdown
+
 require "active_support/callbacks"
 require "active_support/core_ext/module/attribute_accessors_per_thread"
 require "concurrent"
@@ -18,14 +20,15 @@ module ActionCable
 
       def initialize(max_size: 5)
         @executor = Concurrent::ThreadPoolExecutor.new(
+          name: "ActionCable",
           min_threads: 1,
           max_threads: max_size,
           max_queue: 0,
         )
       end
 
-      # Stop processing work: any work that has not already started
-      # running will be discarded from the queue
+      # Stop processing work: any work that has not already started running will be
+      # discarded from the queue
       def halt
         @executor.shutdown
       end
@@ -34,12 +37,10 @@ module ActionCable
         @executor.shuttingdown?
       end
 
-      def work(connection)
+      def work(connection, &block)
         self.connection = connection
 
-        run_callbacks :work do
-          yield
-        end
+        run_callbacks :work, &block
       ensure
         self.connection = nil
       end

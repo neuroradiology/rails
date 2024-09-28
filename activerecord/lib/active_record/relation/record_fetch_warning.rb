@@ -3,6 +3,9 @@
 module ActiveRecord
   class Relation
     module RecordFetchWarning
+      # Deprecated: subscribe to sql.active_record notifications and
+      # access the row count field to detect large result set sizes.
+      #
       # When this module is prepended to ActiveRecord::Relation and
       # +config.active_record.warn_on_records_fetched_greater_than+ is
       # set to an integer, if the number of records a query returns is
@@ -17,9 +20,9 @@ module ActiveRecord
         QueryRegistry.reset
 
         super.tap do |records|
-          if logger && warn_on_records_fetched_greater_than
-            if records.length > warn_on_records_fetched_greater_than
-              logger.warn "Query fetched #{records.size} #{@klass} records: #{QueryRegistry.queries.join(";")}"
+          if model.logger && ActiveRecord.warn_on_records_fetched_greater_than
+            if records.length > ActiveRecord.warn_on_records_fetched_greater_than
+              model.logger.warn "Query fetched #{records.size} #{@klass} records: #{QueryRegistry.queries.join(";")}"
             end
           end
         end
@@ -31,17 +34,15 @@ module ActiveRecord
       end
       # :startdoc:
 
-      class QueryRegistry # :nodoc:
-        extend ActiveSupport::PerThreadRegistry
+      module QueryRegistry # :nodoc:
+        extend self
 
-        attr_reader :queries
-
-        def initialize
-          @queries = []
+        def queries
+          ActiveSupport::IsolatedExecutionState[:active_record_query_registry] ||= []
         end
 
         def reset
-          @queries.clear
+          queries.clear
         end
       end
     end

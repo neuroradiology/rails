@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+# :markup: markdown
+
 module ActionText
   module Serialization
     extend ActiveSupport::Concern
@@ -15,6 +17,8 @@ module ActionText
           nil
         when self
           content.to_html
+        when ActionText::RichText
+          content.body.to_html
         else
           new(content).to_html
         end

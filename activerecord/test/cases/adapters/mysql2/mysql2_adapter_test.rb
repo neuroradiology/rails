@@ -7,8 +7,65 @@ class Mysql2AdapterTest < ActiveRecord::Mysql2TestCase
   include DdlHelper
 
   def setup
-    @conn = ActiveRecord::Base.connection
-    @connection_handler = ActiveRecord::Base.connection_handler
+    @conn = ActiveRecord::Base.lease_connection
+    @original_db_warnings_action = :ignore
+  end
+
+  def test_connection_error
+    error = assert_raises ActiveRecord::ConnectionNotEstablished do
+      ActiveRecord::ConnectionAdapters::Mysql2Adapter.new(socket: File::NULL, prepared_statements: false).connect!
+    end
+    assert_kind_of ActiveRecord::ConnectionAdapters::NullPool, error.connection_pool
+  end
+
+  def test_reconnection_error
+    fake_connection = Class.new do
+      def query_options
+        {}
+      end
+
+      def query(*)
+      end
+
+      def close
+      end
+    end.new
+    @conn = ActiveRecord::ConnectionAdapters::Mysql2Adapter.new(
+      fake_connection,
+      ActiveRecord::Base.logger,
+      nil,
+      { socket: File::NULL, prepared_statements: false }
+    )
+    error = assert_raises ActiveRecord::ConnectionNotEstablished do
+      @conn.reconnect!
+    end
+
+    assert_equal @conn.pool, error.connection_pool
+  end
+
+  def test_mysql2_default_prepared_statements
+    fake_connection = Class.new do
+      def query_options
+        {}
+      end
+
+      def query(*)
+      end
+
+      def close
+      end
+    end.new
+
+    adapter = ActiveRecord.deprecator.silence do
+      ActiveRecord::ConnectionAdapters::Mysql2Adapter.new(
+        fake_connection,
+        ActiveRecord::Base.logger,
+        nil,
+        { socket: File::NULL }
+      )
+    end
+
+    assert_equal false, adapter.prepared_statements
   end
 
   def test_exec_query_nothing_raises_with_no_result_queries
@@ -62,12 +119,13 @@ class Mysql2AdapterTest < ActiveRecord::Mysql2TestCase
   end
 
   def test_columns_for_distinct_with_arel_order
-    order = Object.new
-    def order.to_sql
-      "posts.created_at desc"
-    end
+    Arel::Table.engine = nil # should not rely on the global Arel::Table.engine
+
+    order = Arel.sql("posts.created_at").desc
     assert_equal "posts.created_at AS alias_0, posts.id",
       @conn.columns_for_distinct("posts.id", [order])
+  ensure
+    Arel::Table.engine = ActiveRecord::Base
   end
 
   def test_errors_for_bigint_fks_on_integer_pk_table_in_alter_table
@@ -87,8 +145,37 @@ class Mysql2AdapterTest < ActiveRecord::Mysql2TestCase
       error.message
     )
     assert_not_nil error.cause
+    assert_equal @conn.pool, error.connection_pool
   ensure
     @conn.execute("ALTER TABLE engines DROP COLUMN old_car_id") rescue nil
+  end
+
+  def test_errors_for_multiple_fks_on_mismatched_types_for_pk_table_in_alter_table
+    skip "MariaDB does not return mismatched foreign key in error message" if @conn.mariadb?
+
+    begin
+      error = assert_raises(ActiveRecord::MismatchedForeignKey) do
+        # we should add matched foreign key first to properly test error parsing
+        @conn.add_reference :engines, :person, foreign_key: true
+
+        # table old_cars has primary key of integer
+        @conn.add_reference :engines, :old_car, foreign_key: true
+      end
+
+      assert_match(
+        %r/Column `old_car_id` on table `engines` does not match column `id` on `old_cars`, which has type `int(\(11\))?`\./,
+        error.message
+      )
+      assert_match(
+        %r/To resolve this issue, change the type of the `old_car_id` column on `engines` to be :integer\. \(For example `t.integer :old_car_id`\)\./,
+        error.message
+      )
+      assert_not_nil error.cause
+      assert_equal @conn.pool, error.connection_pool
+    ensure
+      @conn.remove_reference(:engines, :person)
+      @conn.remove_reference(:engines, :old_car)
+    end
   end
 
   def test_errors_for_bigint_fks_on_integer_pk_table_in_create_table
@@ -114,6 +201,7 @@ class Mysql2AdapterTest < ActiveRecord::Mysql2TestCase
       error.message
     )
     assert_not_nil error.cause
+    assert_equal @conn.pool, error.connection_pool
   ensure
     @conn.drop_table :foos, if_exists: true
   end
@@ -141,6 +229,7 @@ class Mysql2AdapterTest < ActiveRecord::Mysql2TestCase
       error.message
     )
     assert_not_nil error.cause
+    assert_equal @conn.pool, error.connection_pool
   ensure
     @conn.drop_table :foos, if_exists: true
   end
@@ -165,86 +254,9 @@ class Mysql2AdapterTest < ActiveRecord::Mysql2TestCase
       column on `foos` to be :string. (For example `t.string :subscriber_id`).
     MSG
     assert_not_nil error.cause
+    assert_equal @conn.pool, error.connection_pool
   ensure
     @conn.drop_table :foos, if_exists: true
-  end
-
-  def test_errors_when_an_insert_query_is_called_while_preventing_writes
-    assert_raises(ActiveRecord::ReadOnlyError) do
-      @connection_handler.while_preventing_writes do
-        @conn.insert("INSERT INTO `engines` (`car_id`) VALUES ('138853948594')")
-      end
-    end
-  end
-
-  def test_errors_when_an_update_query_is_called_while_preventing_writes
-    @conn.insert("INSERT INTO `engines` (`car_id`) VALUES ('138853948594')")
-
-    assert_raises(ActiveRecord::ReadOnlyError) do
-      @connection_handler.while_preventing_writes do
-        @conn.update("UPDATE `engines` SET `engines`.`car_id` = '9989' WHERE `engines`.`car_id` = '138853948594'")
-      end
-    end
-  end
-
-  def test_errors_when_a_delete_query_is_called_while_preventing_writes
-    @conn.execute("INSERT INTO `engines` (`car_id`) VALUES ('138853948594')")
-
-    assert_raises(ActiveRecord::ReadOnlyError) do
-      @connection_handler.while_preventing_writes do
-        @conn.execute("DELETE FROM `engines` where `engines`.`car_id` = '138853948594'")
-      end
-    end
-  end
-
-  def test_errors_when_a_replace_query_is_called_while_preventing_writes
-    @conn.execute("INSERT INTO `engines` (`car_id`) VALUES ('138853948594')")
-
-    assert_raises(ActiveRecord::ReadOnlyError) do
-      @connection_handler.while_preventing_writes do
-        @conn.execute("REPLACE INTO `engines` SET `engines`.`car_id` = '249823948'")
-      end
-    end
-  end
-
-  def test_doesnt_error_when_a_select_query_is_called_while_preventing_writes
-    @conn.execute("INSERT INTO `engines` (`car_id`) VALUES ('138853948594')")
-
-    @connection_handler.while_preventing_writes do
-      assert_equal 1, @conn.execute("SELECT `engines`.* FROM `engines` WHERE `engines`.`car_id` = '138853948594'").entries.count
-    end
-  end
-
-  def test_doesnt_error_when_a_show_query_is_called_while_preventing_writes
-    @connection_handler.while_preventing_writes do
-      assert_equal 2, @conn.execute("SHOW FULL FIELDS FROM `engines`").entries.count
-    end
-  end
-
-  def test_doesnt_error_when_a_set_query_is_called_while_preventing_writes
-    @connection_handler.while_preventing_writes do
-      assert_nil @conn.execute("SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci")
-    end
-  end
-
-  def test_doesnt_error_when_a_describe_query_is_called_while_preventing_writes
-    @connection_handler.while_preventing_writes do
-      assert_equal 2, @conn.execute("DESCRIBE engines").entries.count
-    end
-  end
-
-  def test_doesnt_error_when_a_desc_query_is_called_while_preventing_writes
-    @connection_handler.while_preventing_writes do
-      assert_equal 2, @conn.execute("DESC engines").entries.count
-    end
-  end
-
-  def test_doesnt_error_when_a_read_query_with_leading_chars_is_called_while_preventing_writes
-    @conn.execute("INSERT INTO `engines` (`car_id`) VALUES ('138853948594')")
-
-    @connection_handler.while_preventing_writes do
-      assert_equal 1, @conn.execute("/*action:index*/(\n( SELECT `engines`.* FROM `engines` WHERE `engines`.`car_id` = '138853948594' ) )").entries.count
-    end
   end
 
   def test_read_timeout_exception
@@ -253,37 +265,81 @@ class Mysql2AdapterTest < ActiveRecord::Mysql2TestCase
     ActiveRecord::Base.establish_connection(
       db_config.configuration_hash.merge("read_timeout" => 1)
     )
+    connection = ActiveRecord::Base.lease_connection
 
     error = assert_raises(ActiveRecord::AdapterTimeout) do
-      ActiveRecord::Base.connection.execute("SELECT SLEEP(2)")
+      connection.execute("SELECT SLEEP(2)")
     end
     assert_kind_of ActiveRecord::QueryAborted, error
-
     assert_equal Mysql2::Error::TimeoutError, error.cause.class
+    assert_equal connection.pool, error.connection_pool
   ensure
     ActiveRecord::Base.establish_connection :arunit
   end
 
   def test_statement_timeout_error_codes
     raw_conn = @conn.raw_connection
-    assert_raises(ActiveRecord::StatementTimeout) do
+    error = assert_raises(ActiveRecord::StatementTimeout) do
       raw_conn.stub(:query, ->(_sql) { raise Mysql2::Error.new("fail", 50700, ActiveRecord::ConnectionAdapters::AbstractMysqlAdapter::ER_FILSORT_ABORT) }) {
         @conn.execute("SELECT 1")
       }
     end
+    assert_equal @conn.pool, error.connection_pool
 
-    assert_raises(ActiveRecord::StatementTimeout) do
+    error = assert_raises(ActiveRecord::StatementTimeout) do
       raw_conn.stub(:query, ->(_sql) { raise Mysql2::Error.new("fail", 50700, ActiveRecord::ConnectionAdapters::AbstractMysqlAdapter::ER_QUERY_TIMEOUT) }) {
         @conn.execute("SELECT 1")
       }
     end
+    assert_equal @conn.pool, error.connection_pool
   end
 
-  def test_doesnt_error_when_a_use_query_is_called_while_preventing_writes
-    @connection_handler.while_preventing_writes do
-      db_name = ActiveRecord::Base.configurations.configs_for(env_name: "arunit", name: "primary").database
-      assert_nil @conn.execute("USE #{db_name}")
+  def test_database_timezone_changes_synced_to_connection
+    with_timezone_config default: :local do
+      assert_changes(-> { @conn.raw_connection.query_options[:database_timezone] }, from: :utc, to: :local) do
+        @conn.execute("SELECT 1")
+      end
     end
+  end
+
+  def test_warnings_do_not_change_returned_value_of_exec_update
+    previous_logger = ActiveRecord::Base.logger
+    old_sql_mode = @conn.query_value("SELECT @@SESSION.sql_mode")
+
+    with_db_warnings_action(:log) do
+      ActiveRecord::Base.logger = ActiveSupport::Logger.new(nil)
+
+      # Mysql2 will raise an error when attempting to perform an update that warns if the sql_mode is set to strict
+      @conn.execute("SET @@SESSION.sql_mode=''")
+
+      @conn.execute("INSERT INTO posts (title, body) VALUES('Title', 'Body')")
+      result = @conn.update("UPDATE posts SET title = 'Updated' WHERE id > (0+'foo') LIMIT 1")
+
+      assert_equal 1, result
+    end
+  ensure
+    @conn.execute("SET @@SESSION.sql_mode='#{old_sql_mode}'")
+    ActiveRecord::Base.logger = previous_logger
+  end
+
+  def test_warnings_do_not_change_returned_value_of_exec_delete
+    previous_logger = ActiveRecord::Base.logger
+    old_sql_mode = @conn.query_value("SELECT @@SESSION.sql_mode")
+
+    with_db_warnings_action(:log) do
+      ActiveRecord::Base.logger = ActiveSupport::Logger.new(nil)
+
+      # Mysql2 will raise an error when attempting to perform a delete that warns if the sql_mode is set to strict
+      @conn.execute("SET @@SESSION.sql_mode=''")
+
+      @conn.execute("INSERT INTO posts (title, body) VALUES('Title', 'Body')")
+      result = @conn.delete("DELETE FROM posts WHERE id > (0+'foo') LIMIT 1")
+
+      assert_equal 1, result
+    end
+  ensure
+    @conn.execute("SET @@SESSION.sql_mode='#{old_sql_mode}'")
+    ActiveRecord::Base.logger = previous_logger
   end
 
   private

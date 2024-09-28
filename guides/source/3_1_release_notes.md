@@ -11,7 +11,7 @@ Highlights in Rails 3.1:
 * jQuery as the default JavaScript library
 
 These release notes cover only the major changes. To learn about various bug
-fixes and changes, please refer to the change logs or check out the [list of
+fixes and changes, please refer to the changelogs or check out the [list of
 commits](https://github.com/rails/rails/commits/3-1-stable) in the main Rails
 repository on GitHub.
 
@@ -37,18 +37,18 @@ The following changes are meant for upgrading your application to Rails 3.1.3, t
 Make the following changes to your `Gemfile`.
 
 ```ruby
-gem 'rails', '= 3.1.3'
-gem 'mysql2'
+gem "rails", "= 3.1.3"
+gem "mysql2"
 
 # Needed for the new asset pipeline
 group :assets do
-  gem 'sass-rails',   "~> 3.1.5"
-  gem 'coffee-rails', "~> 3.1.1"
-  gem 'uglifier',     ">= 1.0.3"
+  gem "sass-rails",   "~> 3.1.5"
+  gem "coffee-rails", "~> 3.1.1"
+  gem "uglifier",     ">= 1.0.3"
 end
 
 # jQuery is the default JavaScript library in Rails 3.1
-gem 'jquery-rails'
+gem "jquery-rails"
 ```
 
 #### config/application.rb
@@ -221,7 +221,7 @@ Railties
 
 * Added `Rack::Cache` to the default middleware stack.
 
-* Engines received a major update - You can mount them at any path, enable assets, run generators etc.
+* Engines received a major update - You can mount them at any path, enable assets, run generators, etc.
 
 Action Pack
 -----------
@@ -455,7 +455,7 @@ Active Record
     ```ruby
     class FooMigration < ActiveRecord::Migration
       def up # Not self.up
-        ...
+        # ...
       end
     end
     ```

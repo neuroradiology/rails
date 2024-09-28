@@ -1,14 +1,14 @@
 # frozen_string_literal: true
 
 require "cases/helper"
-require "models/man"
+require "models/human"
 require "models/face"
 require "models/interest"
 require "models/speedometer"
 require "models/dashboard"
 
 class PresenceValidationTest < ActiveRecord::TestCase
-  class Boy < Man; end
+  class Boy < Human; end
 
   repair_validations(Boy)
 
@@ -24,7 +24,7 @@ class PresenceValidationTest < ActiveRecord::TestCase
   def test_validates_presence_of_has_one
     Boy.validates_presence_of(:face)
     b = Boy.new
-    assert b.invalid?, "should not be valid if has_one association missing"
+    assert_predicate b, :invalid?, "should not be valid if has_one association missing"
     assert_equal 1, b.errors[:face].size, "validates_presence_of should only add one error"
   end
 

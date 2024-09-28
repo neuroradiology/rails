@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+# :markup: markdown
+
 require "rails"
 require "action_controller/railtie"
 require "active_record/railtie"
@@ -12,9 +14,27 @@ module ActionText
     isolate_namespace ActionText
     config.eager_load_namespaces << ActionText
 
+    config.action_text = ActiveSupport::OrderedOptions.new
+    config.action_text.attachment_tag_name = "action-text-attachment"
+    config.autoload_once_paths = %W(
+      #{root}/app/helpers
+      #{root}/app/models
+    )
+
+    initializer "action_text.deprecator", before: :load_environment_config do |app|
+      app.deprecators[:action_text] = ActionText.deprecator
+    end
+
     initializer "action_text.attribute" do
       ActiveSupport.on_load(:active_record) do
         include ActionText::Attribute
+        prepend ActionText::Encryption
+      end
+    end
+
+    initializer "action_text.asset" do
+      if Rails.application.config.respond_to?(:assets)
+        Rails.application.config.assets.precompile += %w( actiontext.js actiontext.esm.js trix.js trix.css )
       end
     end
 
@@ -37,21 +57,20 @@ module ActionText
     end
 
     initializer "action_text.helper" do
-      ActiveSupport.on_load(:action_controller_base) do
-        helper ActionText::Engine.helpers
+      %i[action_controller_base action_mailer].each do |base|
+        ActiveSupport.on_load(base) do
+          helper ActionText::Engine.helpers
+        end
       end
     end
 
-    initializer "action_text.renderer" do |app|
-      app.executor.to_run      { ActionText::Content.renderer = ApplicationController.renderer }
-      app.executor.to_complete { ActionText::Content.renderer = ApplicationController.renderer }
-
-      ActiveSupport.on_load(:action_text_content) do
-        self.renderer = ApplicationController.renderer
-      end
-
-      ActiveSupport.on_load(:action_controller_base) do
-        before_action { ActionText::Content.renderer = ApplicationController.renderer.new(request.env) }
+    initializer "action_text.renderer" do
+      %i[action_controller_base action_mailer].each do |base|
+        ActiveSupport.on_load(base) do
+          around_action do |controller, action|
+            ActionText::Content.with_renderer(controller, &action)
+          end
+        end
       end
     end
 
@@ -59,6 +78,16 @@ module ActionText
       ActiveSupport.on_load(:action_dispatch_system_test_case) do
         require "action_text/system_test_helper"
         include ActionText::SystemTestHelper
+      end
+    end
+
+    initializer "action_text.configure" do |app|
+      ActionText::Attachment.tag_name = app.config.action_text.attachment_tag_name
+    end
+
+    config.after_initialize do |app|
+      if klass = app.config.action_text.sanitizer_vendor
+        ActionText::ContentHelper.sanitizer = klass.safe_list_sanitizer.new
       end
     end
   end

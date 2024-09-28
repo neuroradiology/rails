@@ -14,13 +14,17 @@ module ActiveRecord
         @klass = Class.new(Class.new { def self.initialize_generated_modules; end }) do
           def self.superclass; Base; end
           def self.base_class?; true; end
-          def self.decorate_matching_attribute_types(*); end
+          def self.abstract_class?; false; end
+          def self.load_schema; end
 
-          include ActiveRecord::DefineCallbacks
           include ActiveRecord::AttributeMethods
 
           def self.attribute_names
             %w{ one two three }
+          end
+
+          def self.attribute_types
+            {}
           end
 
           def self.primary_key

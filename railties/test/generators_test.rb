@@ -25,16 +25,24 @@ class GeneratorsTest < Rails::Generators::TestCase
 
   def test_invoke_when_generator_is_not_found
     name = :unknown
-    output = capture(:stdout) { Rails::Generators.invoke name }
-    assert_match "Could not find generator '#{name}'", output
+    output = capture(:stdout) {
+      assert_raises SystemExit do
+        Rails::Generators.invoke name
+      end
+    }
+    assert_match "Could not find generator '#{name}'.", output
     assert_match "`bin/rails generate --help`", output
-    assert_no_match "Maybe you meant", output
+    assert_no_match "Did you mean", output
   end
 
   def test_generator_suggestions
     name = :migrationz
-    output = capture(:stdout) { Rails::Generators.invoke name }
-    assert_match 'Maybe you meant "migration"?', output
+    output = capture(:stdout) {
+      assert_raises SystemExit do
+        Rails::Generators.invoke name
+      end
+    }
+    assert_match "Did you mean?  migration", output
   end
 
   def test_generator_suggestions_except_en_locale
@@ -43,8 +51,12 @@ class GeneratorsTest < Rails::Generators::TestCase
     I18n.available_locales = :ja
     I18n.default_locale = :ja
     name = :tas
-    output = capture(:stdout) { Rails::Generators.invoke name }
-    assert_match 'Maybe you meant "task"?', output
+    output = capture(:stdout) {
+      assert_raises SystemExit do
+        Rails::Generators.invoke name
+      end
+    }
+    assert_match "Did you mean?  task", output
   ensure
     I18n.available_locales = orig_available_locales
     I18n.default_locale = orig_default_locale
@@ -152,12 +164,12 @@ class GeneratorsTest < Rails::Generators::TestCase
 
   def test_default_banner_should_show_generator_namespace
     klass = Rails::Generators.find_by_namespace(:foobar)
-    assert_match(/^rails generate foobar:foobar/, klass.banner)
+    assert_match(/^bin\/rails generate foobar:foobar/, klass.banner)
   end
 
   def test_default_banner_should_not_show_rails_generator_namespace
     klass = Rails::Generators.find_by_namespace(:model)
-    assert_match(/^rails generate model/, klass.banner)
+    assert_match(/^bin\/rails generate model/, klass.banner)
   end
 
   def test_no_color_sets_proper_shell

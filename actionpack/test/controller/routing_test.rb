@@ -17,7 +17,7 @@ class UriReservedCharactersRoutingTest < ActiveSupport::TestCase
   def setup
     @set = ActionDispatch::Routing::RouteSet.new
     @set.draw do
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get ":controller/:action/:variable/*additional"
       end
     end
@@ -171,7 +171,7 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
     end
 
     u = URI("http://example.org/foo/bar.html")
-    assert_equal u.path.sub(/^\//, ""), get(u)
+    assert_equal u.path.delete_prefix("/"), get(u)
   end
 
   def test_star_paths_are_greedy_but_not_too_much
@@ -196,7 +196,7 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
     end
 
     u = URI("http://example.org/ne_27.065938,-80.6092/sw_25.489856,-82.542794")
-    assert_equal u.path.sub(/^\//, ""), get(u)
+    assert_equal u.path.delete_prefix("/"), get(u)
   end
 
   def test_optional_star_paths_are_greedy_but_not_too_much
@@ -216,7 +216,7 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
   def test_regexp_precedence
     rs.draw do
       get "/whois/:domain", constraints: {
-        domain: /\w+\.[\w\.]+/ },
+        domain: /\w+\.[\w.]+/ },
         to: lambda { |env| [200, {}, %w{regexp}] }
 
       get "/whois/:id", to: lambda { |env| [200, {}, %w{id}] }
@@ -242,6 +242,18 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
 
     assert_equal "default", get(URI("http://www.example.org/"))
     assert_equal "clients", get(URI("http://clients.example.org/"))
+  end
+
+  def test_format_symbol_constraints
+    rs.draw do
+      get "/api", constraints: { format: :json },
+                 to: lambda { |env| [200, {}, %w{json}] }
+      get "/api", constraints: { format: :xml },
+                 to: lambda { |env| [200, {}, %w{xml}] }
+    end
+
+    assert_equal "json", get(URI("http://www.example.org/api.json"))
+    assert_equal "xml", get(URI("http://clients.example.org/api.xml"))
   end
 
   def test_lambda_constraints
@@ -318,7 +330,7 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
   end
 
   def test_default_setup
-    rs.draw { ActiveSupport::Deprecation.silence { get "/:controller(/:action(/:id))" } }
+    rs.draw { ActionDispatch.deprecator.silence { get "/:controller(/:action(/:id))" } }
     assert_equal({ controller: "content", action: "index" }, rs.recognize_path("/content"))
     assert_equal({ controller: "content", action: "list" },  rs.recognize_path("/content/list"))
     assert_equal({ controller: "content", action: "show", id: "10" }, rs.recognize_path("/content/show/10"))
@@ -339,9 +351,25 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
     assert_equal "/stuff", controller.url_for(controller: "/stuff", only_path: true)
   end
 
+  def test_route_uri_pattern
+    rs.draw { ActionDispatch.deprecator.silence { get "/:controller(/:action(/:id))" } }
+
+    get URI("http://test.host/admin/user/list/10")
+
+    assert_equal(
+      "/:controller(/:action(/:id))(.:format)",
+      controller.request.route_uri_pattern
+    )
+
+    assert_equal(
+      "/:controller(/:action(/:id))(.:format)",
+      controller.request.get_header("action_dispatch.route_uri_pattern")
+    )
+  end
+
   def test_route_with_colon_first
     rs.draw do
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get "/:controller/:action/:id", action: "index", id: nil
       end
 
@@ -352,7 +380,7 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
   end
 
   def test_route_with_regexp_for_action
-    rs.draw { ActiveSupport::Deprecation.silence { get "/:controller/:action", action: /auth[-|_].+/ } }
+    rs.draw { ActionDispatch.deprecator.silence { get "/:controller/:action", action: /auth[-|_].+/ } }
 
     assert_equal({ action: "auth_google", controller: "content" }, rs.recognize_path("/content/auth_google"))
     assert_equal({ action: "auth-twitter", controller: "content" }, rs.recognize_path("/content/auth-twitter"))
@@ -363,7 +391,7 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
 
   def test_route_with_regexp_for_controller
     rs.draw do
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get ":controller/:admintoken(/:action(/:id))", controller: /admin\/.+/
         get "/:controller(/:action(/:id))"
       end
@@ -380,7 +408,7 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
 
   def test_route_with_regexp_and_captures_for_controller
     rs.draw do
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get "/:controller(/:action(/:id))", controller: /admin\/(accounts|users)/
       end
     end
@@ -391,7 +419,7 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
 
   def test_route_with_regexp_and_dot
     rs.draw do
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get ":controller/:action/:file",
                   controller: /admin|user/,
                   action: /upload|download/,
@@ -418,7 +446,7 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
     rs.draw do
       root to: "content#list", as: "home"
     end
-    assert_equal("http://test.host/", setup_for_named_route.send(:home_url))
+    assert_equal("http://test.host/", setup_for_named_route.home_url)
   end
 
   def test_named_route_with_option
@@ -427,7 +455,7 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
     end
 
     assert_equal("http://test.host/page/new%20stuff",
-        setup_for_named_route.send(:page_url, title: "new stuff"))
+        setup_for_named_route.page_url(title: "new stuff"))
   end
 
   def test_named_route_with_default
@@ -436,7 +464,7 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
     end
 
     assert_equal("http://test.host/page/AboutRails",
-        setup_for_named_route.send(:page_url, title: "AboutRails"))
+        setup_for_named_route.page_url(title: "AboutRails"))
   end
 
   def test_named_route_with_path_prefix
@@ -446,8 +474,7 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
       end
     end
 
-    assert_equal("http://test.host/my/page",
-        setup_for_named_route.send(:page_url))
+    assert_equal("http://test.host/my/page", setup_for_named_route.page_url)
   end
 
   def test_named_route_with_blank_path_prefix
@@ -457,8 +484,7 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
       end
     end
 
-    assert_equal("http://test.host/page",
-        setup_for_named_route.send(:page_url))
+    assert_equal("http://test.host/page", setup_for_named_route.page_url)
   end
 
   def test_named_route_with_nested_controller
@@ -466,8 +492,7 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
       get "admin/user" => "admin/user#index", :as => "users"
     end
 
-    assert_equal("http://test.host/admin/user",
-        setup_for_named_route.send(:users_url))
+    assert_equal("http://test.host/admin/user", setup_for_named_route.users_url)
   end
 
   def test_optimised_named_route_with_host
@@ -483,9 +508,11 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
   end
 
   def test_named_route_without_hash
-    rs.draw do
-      ActiveSupport::Deprecation.silence do
-        get ":controller/:action/:id", as: "normal"
+    assert_nothing_raised do
+      rs.draw do
+        ActionDispatch.deprecator.silence do
+          get ":controller/:action/:id", as: "normal"
+        end
       end
     end
   end
@@ -495,8 +522,8 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
       root to: "hello#index"
     end
     routes = setup_for_named_route
-    assert_equal("http://test.host/", routes.send(:root_url))
-    assert_equal("/", routes.send(:root_path))
+    assert_equal("http://test.host/", routes.root_url)
+    assert_equal("/", routes.root_path)
   end
 
   def test_named_route_root_without_hash
@@ -504,8 +531,8 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
       root "hello#index"
     end
     routes = setup_for_named_route
-    assert_equal("http://test.host/", routes.send(:root_url))
-    assert_equal("/", routes.send(:root_path))
+    assert_equal("http://test.host/", routes.root_url)
+    assert_equal("/", routes.root_path)
   end
 
   def test_named_route_root_with_hash
@@ -514,8 +541,8 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
     end
 
     routes = setup_for_named_route
-    assert_equal("http://test.host/", routes.send(:index_url))
-    assert_equal("/", routes.send(:index_path))
+    assert_equal("http://test.host/", routes.index_url)
+    assert_equal("/", routes.index_path)
   end
 
   def test_root_without_path_raises_argument_error
@@ -530,8 +557,8 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
     end
 
     routes = setup_for_named_route(trailing_slash: true)
-    assert_equal("http://test.host/", routes.send(:root_url))
-    assert_equal("http://test.host/?foo=bar", routes.send(:root_url, foo: :bar))
+    assert_equal("http://test.host/", routes.root_url)
+    assert_equal("http://test.host/?foo=bar", routes.root_url(foo: :bar))
   end
 
   def test_named_route_with_regexps
@@ -539,7 +566,7 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
       get "page/:year/:month/:day/:title" => "page#show", :as => "article",
         :year => /\d+/, :month => /\d+/, :day => /\d+/
 
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get ":controller/:action/:id"
       end
     end
@@ -547,11 +574,11 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
     routes = setup_for_named_route
 
     assert_equal "http://test.host/page/2005/6/10/hi",
-      routes.send(:article_url, title: "hi", day: 10, year: 2005, month: 6)
+      routes.article_url(title: "hi", day: 10, year: 2005, month: 6)
   end
 
   def test_changing_controller
-    rs.draw { ActiveSupport::Deprecation.silence { get ":controller/:action/:id" } }
+    rs.draw { ActionDispatch.deprecator.silence { get ":controller/:action/:id" } }
 
     get URI("http://test.host/admin/user/index/10")
 
@@ -563,7 +590,7 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
     rs.draw do
       get "file/*path" => "content#show_file", :as => "path"
 
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get ":controller/:action/:id"
       end
     end
@@ -585,12 +612,12 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
     end
 
     # No / to %2F in URI, only for query params.
-    assert_equal("/file/hello/world", setup_for_named_route.send(:path_path, ["hello", "world"]))
+    assert_equal("/file/hello/world", setup_for_named_route.path_path(["hello", "world"]))
   end
 
   def test_non_controllers_cannot_be_matched
     rs.draw do
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get ":controller/:action/:id"
       end
     end
@@ -615,6 +642,34 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
         url_for(rs, controller: "content", action: "show_file", path: %w(pages boo))
   end
 
+  def test_escapes_newline_character_for_dynamic_path
+    rs.draw do
+      get "/dynamic/:dynamic_segment" => "subpath_books#show", as: :dynamic
+
+      ActionDispatch.deprecator.silence do
+        get ":controller/:action/:id"
+      end
+    end
+
+    results = rs.recognize_path("/dynamic/a%0Anewline")
+    assert(results, "Recognition should have succeeded")
+    assert_equal("a\nnewline", results[:dynamic_segment])
+  end
+
+  def test_escapes_newline_character_for_wildcard_path
+    rs.draw do
+      get "/wildcard/*wildcard_segment" => "subpath_books#show", as: :wildcard
+
+      ActionDispatch.deprecator.silence do
+        get ":controller/:action/:id"
+      end
+    end
+
+    results = rs.recognize_path("/wildcard/a%0Anewline")
+    assert(results, "Recognition should have succeeded")
+    assert_equal("a\nnewline", results[:wildcard_segment])
+  end
+
   def test_dynamic_recall_paths_allowed
     rs.draw do
       get "*path" => "content#show_file"
@@ -630,7 +685,7 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
 
   def test_backwards
     rs.draw do
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get "page/:id(/:action)" => "pages#show"
         get ":controller(/:action(/:id))"
       end
@@ -646,7 +701,7 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
     rs.draw do
       get "page(/:id)" => "content#show_page", :id => 1
 
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get ":controller/:action/:id"
       end
     end
@@ -666,7 +721,7 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
     rs.draw do
       get "page/:id" => "content#show_page", :id => 1
 
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get ":controller/:action/:id"
       end
     end
@@ -683,7 +738,7 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
   end
 
   def test_action_expiry
-    rs.draw { ActiveSupport::Deprecation.silence { get ":controller(/:action(/:id))" } }
+    rs.draw { ActionDispatch.deprecator.silence { get ":controller(/:action(/:id))" } }
     get URI("http://test.host/content/show")
     assert_equal "/content", controller.url_for(controller: "content", only_path: true)
   end
@@ -707,7 +762,7 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
         :constraints => { year: /\d{4}/ }
       )
 
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get ":controller/:action/:id"
       end
     end
@@ -715,14 +770,14 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
     assert_equal "/test", url_for(rs, controller: "post", action: "show")
     assert_equal "/test", url_for(rs, controller: "post", action: "show", year: nil)
 
-    assert_equal("http://test.host/test", setup_for_named_route.send(:blog_url))
+    assert_equal("http://test.host/test", setup_for_named_route.blog_url)
   end
 
   def test_set_to_nil_forgets
     rs.draw do
       get "pages(/:year(/:month(/:day)))" => "content#list_pages", :month => nil, :day => nil
 
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get ":controller/:action/:id"
       end
     end
@@ -765,14 +820,14 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
     assert_equal "/", url_for(rs, controller: "content", action: "index")
     assert_equal "/", url_for(rs, controller: "content")
 
-    assert_equal("http://test.host/", setup_for_named_route.send(:home_url))
+    assert_equal("http://test.host/", setup_for_named_route.home_url)
   end
 
   def test_named_route_method
     rs.draw do
       get "categories" => "content#categories", :as => "categories"
 
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get ":controller(/:action(/:id))"
       end
     end
@@ -791,7 +846,7 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
       get "journal" => "content#list_journal",
         :date => nil, :user_id => nil
 
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get ":controller/:action/:id"
       end
     end
@@ -832,7 +887,7 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
 
   def test_subpath_recognized
     rs.draw do
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get "/books/:id/edit"    => "subpath_books#edit"
         get "/items/:id/:action" => "subpath_books"
         get "/posts/new/:action" => "subpath_books"
@@ -859,7 +914,7 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
 
   def test_subpath_generated
     rs.draw do
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get "/books/:id/edit"    => "subpath_books#edit"
         get "/items/:id/:action" => "subpath_books"
         get "/posts/new/:action" => "subpath_books"
@@ -877,7 +932,7 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
     end
 
     assert_raise(ActionController::UrlGenerationError) do
-      setup_for_named_route.send(:foo_with_requirement_url, "I am Against the constraints")
+      setup_for_named_route.foo_with_requirement_url("I am Against the constraints")
     end
   end
 
@@ -888,7 +943,7 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
       get "cb" => "cb#ab"
       get "cc" => "cc#ac"
 
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get ":controller/:action/:id"
         get ":controller/:action/:id.:format"
       end
@@ -903,7 +958,7 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
       get "cb" => "cb#ab"
       get "cc" => "cc#ac"
 
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get ":controller/:action/:id"
         get ":controller/:action/:id.:format"
       end
@@ -913,6 +968,39 @@ class LegacyRouteSetTests < ActiveSupport::TestCase
 
     assert_not_nil hash
     assert_equal %w(cc ac), [hash[:controller], hash[:action]]
+  end
+
+  def test_drawing_more_routes_after_eager_loading
+    rs = ::ActionDispatch::Routing::RouteSet.new
+    rs.disable_clear_and_finalize = true
+
+    rs.draw do
+      get "/plain" => "c#plain"
+      get "/:symbol" => "c#symbol"
+      get "/glob/*" => "c#glob"
+      get "/with#anchor" => "c#with_anchor"
+    end
+
+    hash = rs.recognize_path "/symbol"
+    assert_not_nil hash
+    assert_equal %w(c symbol), [hash[:controller], hash[:action]]
+
+    rs.eager_load!
+
+    rs.draw do
+      get "/more/plain" => "c#plain"
+      get "/more/:symbol" => "c#symbol"
+      get "/more/glob/*" => "c#glob"
+      get "/more/with#anchor" => "c#with_anchor"
+    end
+
+    hash = rs.recognize_path "/symbol"
+    assert_not_nil hash
+    assert_equal %w(c symbol), [hash[:controller], hash[:action]]
+
+    hash = rs.recognize_path "/more/symbol"
+    assert_not_nil hash
+    assert_equal %w(c symbol), [hash[:controller], hash[:action]]
   end
 end
 
@@ -937,7 +1025,7 @@ class RouteSetTest < ActiveSupport::TestCase
     @default_route_set ||= begin
       set = ActionDispatch::Routing::RouteSet.new
       set.draw do
-        ActiveSupport::Deprecation.silence do
+        ActionDispatch.deprecator.silence do
           get "/:controller(/:action(/:id))"
         end
       end
@@ -946,21 +1034,21 @@ class RouteSetTest < ActiveSupport::TestCase
   end
 
   def test_generate_extras
-    set.draw { ActiveSupport::Deprecation.silence { get ":controller/(:action(/:id))" } }
+    set.draw { ActionDispatch.deprecator.silence { get ":controller/(:action(/:id))" } }
     path, extras = set.generate_extras(controller: "foo", action: "bar", id: 15, this: "hello", that: "world")
     assert_equal "/foo/bar/15", path
     assert_equal %w(that this), extras.map(&:to_s).sort
   end
 
   def test_extra_keys
-    set.draw { ActiveSupport::Deprecation.silence { get ":controller/:action/:id" } }
+    set.draw { ActionDispatch.deprecator.silence { get ":controller/:action/:id" } }
     extras = set.extra_keys(controller: "foo", action: "bar", id: 15, this: "hello", that: "world")
     assert_equal %w(that this), extras.map(&:to_s).sort
   end
 
   def test_generate_extras_not_first
     set.draw do
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get ":controller/:action/:id.:format"
         get ":controller/:action/:id"
       end
@@ -972,7 +1060,7 @@ class RouteSetTest < ActiveSupport::TestCase
 
   def test_generate_not_first
     set.draw do
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get ":controller/:action/:id.:format"
         get ":controller/:action/:id"
       end
@@ -983,7 +1071,7 @@ class RouteSetTest < ActiveSupport::TestCase
 
   def test_extra_keys_not_first
     set.draw do
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get ":controller/:action/:id.:format"
         get ":controller/:action/:id"
       end
@@ -1042,83 +1130,83 @@ class RouteSetTest < ActiveSupport::TestCase
   def test_named_route_url_method
     controller = setup_named_route_test
 
-    assert_equal "http://test.host/people/5", controller.send(:show_url, id: 5)
-    assert_equal "/people/5", controller.send(:show_path, id: 5)
+    assert_equal "http://test.host/people/5", controller.show_url(id: 5)
+    assert_equal "/people/5", controller.show_path(id: 5)
 
-    assert_equal "http://test.host/people", controller.send(:index_url)
-    assert_equal "/people", controller.send(:index_path)
+    assert_equal "http://test.host/people", controller.index_url
+    assert_equal "/people", controller.index_path
 
-    assert_equal "http://test.host/admin/users", controller.send(:users_url)
-    assert_equal "/admin/users", controller.send(:users_path)
+    assert_equal "http://test.host/admin/users", controller.users_url
+    assert_equal "/admin/users", controller.users_path
   end
 
   def test_named_route_url_method_with_anchor
     controller = setup_named_route_test
 
-    assert_equal "http://test.host/people/5#location", controller.send(:show_url, id: 5, anchor: "location")
-    assert_equal "/people/5#location", controller.send(:show_path, id: 5, anchor: "location")
+    assert_equal "http://test.host/people/5#location", controller.show_url(id: 5, anchor: "location")
+    assert_equal "/people/5#location", controller.show_path(id: 5, anchor: "location")
 
-    assert_equal "http://test.host/people#location", controller.send(:index_url, anchor: "location")
-    assert_equal "/people#location", controller.send(:index_path, anchor: "location")
+    assert_equal "http://test.host/people#location", controller.index_url(anchor: "location")
+    assert_equal "/people#location", controller.index_path(anchor: "location")
 
-    assert_equal "http://test.host/admin/users#location", controller.send(:users_url, anchor: "location")
-    assert_equal "/admin/users#location", controller.send(:users_path, anchor: "location")
+    assert_equal "http://test.host/admin/users#location", controller.users_url(anchor: "location")
+    assert_equal "/admin/users#location", controller.users_path(anchor: "location")
 
     assert_equal "http://test.host/people/go/7/hello/joe/5#location",
-      controller.send(:multi_url, 7, "hello", 5, anchor: "location")
+      controller.multi_url(7, "hello", 5, anchor: "location")
 
     assert_equal "http://test.host/people/go/7/hello/joe/5?baz=bar#location",
-      controller.send(:multi_url, 7, "hello", 5, baz: "bar", anchor: "location")
+      controller.multi_url(7, "hello", 5, baz: "bar", anchor: "location")
 
     assert_equal "http://test.host/people?baz=bar#location",
-      controller.send(:index_url, baz: "bar", anchor: "location")
+      controller.index_url(baz: "bar", anchor: "location")
 
-    assert_equal "http://test.host/people", controller.send(:index_url, anchor: nil)
-    assert_equal "http://test.host/people", controller.send(:index_url, anchor: false)
+    assert_equal "http://test.host/people", controller.index_url(anchor: nil)
+    assert_equal "http://test.host/people", controller.index_url(anchor: false)
   end
 
   def test_named_route_url_method_with_port
     controller = setup_named_route_test
-    assert_equal "http://test.host:8080/people/5", controller.send(:show_url, 5, port: 8080)
+    assert_equal "http://test.host:8080/people/5", controller.show_url(5, port: 8080)
   end
 
   def test_named_route_url_method_with_host
     controller = setup_named_route_test
-    assert_equal "http://some.example.com/people/5", controller.send(:show_url, 5, host: "some.example.com")
+    assert_equal "http://some.example.com/people/5", controller.show_url(5, host: "some.example.com")
   end
 
   def test_named_route_url_method_with_protocol
     controller = setup_named_route_test
-    assert_equal "https://test.host/people/5", controller.send(:show_url, 5, protocol: "https")
+    assert_equal "https://test.host/people/5", controller.show_url(5, protocol: "https")
   end
 
   def test_named_route_url_method_with_ordered_parameters
     controller = setup_named_route_test
     assert_equal "http://test.host/people/go/7/hello/joe/5",
-      controller.send(:multi_url, 7, "hello", 5)
+      controller.multi_url(7, "hello", 5)
   end
 
   def test_named_route_url_method_with_ordered_parameters_and_hash
     controller = setup_named_route_test
     assert_equal "http://test.host/people/go/7/hello/joe/5?baz=bar",
-      controller.send(:multi_url, 7, "hello", 5, baz: "bar")
+      controller.multi_url(7, "hello", 5, baz: "bar")
   end
 
   def test_named_route_url_method_with_ordered_parameters_and_empty_hash
     controller = setup_named_route_test
     assert_equal "http://test.host/people/go/7/hello/joe/5",
-      controller.send(:multi_url, 7, "hello", 5, {})
+      controller.multi_url(7, "hello", 5, {})
   end
 
   def test_named_route_url_method_with_no_positional_arguments
     controller = setup_named_route_test
     assert_equal "http://test.host/people?baz=bar",
-      controller.send(:index_url, baz: "bar")
+      controller.index_url(baz: "bar")
   end
 
   def test_draw_default_route
     set.draw do
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get ":controller/:action/:id"
       end
     end
@@ -1136,7 +1224,7 @@ class RouteSetTest < ActiveSupport::TestCase
     set.draw do
       get "page/:id" => "pages#show", :id => /\d+/
 
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get "/:controller(/:action(/:id))"
       end
     end
@@ -1203,7 +1291,7 @@ class RouteSetTest < ActiveSupport::TestCase
 
   def test_recognize_with_encoded_id_and_regex
     set.draw do
-      get "page/:id" => "pages#show", :id => /[a-zA-Z0-9\+]+/
+      get "page/:id" => "pages#show", :id => /[a-zA-Z0-9+]+/
     end
 
     assert_equal({ controller: "pages", action: "show", id: "10" }, request_path_params("/page/10"))
@@ -1391,7 +1479,7 @@ class RouteSetTest < ActiveSupport::TestCase
     @set = make_set false
 
     set.draw do
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get ":controller/:id/:action"
       end
     end
@@ -1407,7 +1495,7 @@ class RouteSetTest < ActiveSupport::TestCase
     set.draw do
       get "about" => "welcome#about"
 
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get ":controller/:id/:action"
       end
     end
@@ -1420,7 +1508,7 @@ class RouteSetTest < ActiveSupport::TestCase
   end
 
   def test_generate
-    set.draw { ActiveSupport::Deprecation.silence { get ":controller/:action/:id" } }
+    set.draw { ActionDispatch.deprecator.silence { get ":controller/:action/:id" } }
 
     args = { controller: "foo", action: "bar", id: "7", x: "y" }
     assert_equal "/foo/bar/7?x=y",     url_for(set, args)
@@ -1431,7 +1519,7 @@ class RouteSetTest < ActiveSupport::TestCase
   def test_generate_with_path_prefix
     set.draw do
       scope "my" do
-        ActiveSupport::Deprecation.silence do
+        ActionDispatch.deprecator.silence do
           get ":controller(/:action(/:id))"
         end
       end
@@ -1444,7 +1532,7 @@ class RouteSetTest < ActiveSupport::TestCase
   def test_generate_with_blank_path_prefix
     set.draw do
       scope "" do
-        ActiveSupport::Deprecation.silence do
+        ActionDispatch.deprecator.silence do
           get ":controller(/:action(/:id))"
         end
       end
@@ -1458,7 +1546,7 @@ class RouteSetTest < ActiveSupport::TestCase
     @set = make_set false
 
     set.draw do
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get "/connection/manage(/:action)" => "connection/manage#index"
         get "/connection/connection" => "connection/connection#index"
         get "/connection" => "connection#index", :as => "family_connection"
@@ -1480,7 +1568,7 @@ class RouteSetTest < ActiveSupport::TestCase
     @set = make_set false
 
     set.draw do
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get ":controller(/:action(/:id))"
       end
     end
@@ -1498,7 +1586,7 @@ class RouteSetTest < ActiveSupport::TestCase
     set.draw do
       get "show_weblog/:parameter" => "weblog#show"
 
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get ":controller(/:action(/:id))"
       end
     end
@@ -1528,7 +1616,7 @@ class RouteSetTest < ActiveSupport::TestCase
   def test_expiry_determination_should_consider_values_with_to_param
     @set = make_set false
 
-    set.draw { ActiveSupport::Deprecation.silence { get "projects/:project_id/:controller/:action" } }
+    set.draw { ActionDispatch.deprecator.silence { get "projects/:project_id/:controller/:action" } }
 
     get URI("http://test.host/projects/1/weblog/show")
 
@@ -1608,12 +1696,12 @@ class RouteSetTest < ActiveSupport::TestCase
     set.draw do
       get "page/:name" => "pages#show", :constraints => lambda { |request|
         name_param = request.params[:name]
-        return true
+        true
       }
     end
     assert_equal({ controller: "pages", action: "show", name: "mypage" },
       set.recognize_path("http://subdomain.example.org/page/mypage"))
-    assert_equal(name_param, "mypage")
+    assert_equal("mypage", name_param)
   end
 
   def test_route_requirement_recognize_with_ignore_case
@@ -1705,7 +1793,7 @@ class RouteSetTest < ActiveSupport::TestCase
 
   def test_assign_route_options_with_anchor_chars
     set.draw do
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get "/cars/:action/:person/:car/", controller: "cars"
       end
     end
@@ -1717,7 +1805,7 @@ class RouteSetTest < ActiveSupport::TestCase
 
   def test_segmentation_of_dot_path
     set.draw do
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get "/books/:action.rss", controller: "books"
       end
     end
@@ -1729,7 +1817,7 @@ class RouteSetTest < ActiveSupport::TestCase
 
   def test_segmentation_of_dynamic_dot_path
     set.draw do
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get "/books(/:action(.:format))", controller: "books"
       end
     end
@@ -1746,7 +1834,7 @@ class RouteSetTest < ActiveSupport::TestCase
   end
 
   def test_slashes_are_implied
-    set.draw { ActiveSupport::Deprecation.silence { get("/:controller(/:action(/:id))") } }
+    set.draw { ActionDispatch.deprecator.silence { get("/:controller(/:action(/:id))") } }
 
     assert_equal "/content",        url_for(set, controller: "content", action: "index")
     assert_equal "/content/list",   url_for(set, controller: "content", action: "list")
@@ -1837,7 +1925,7 @@ class RouteSetTest < ActiveSupport::TestCase
                              :constraints => { page: /\d+/ },
                              :defaults => { page: 1 }
 
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get ":controller/:action/:id"
       end
     end
@@ -1846,8 +1934,6 @@ class RouteSetTest < ActiveSupport::TestCase
   end
 
   include ActionDispatch::RoutingVerbs
-
-  alias :routes :set
 
   def test_generate_with_optional_params_recalls_last_request
     @set = make_set false
@@ -1863,7 +1949,7 @@ class RouteSetTest < ActiveSupport::TestCase
 
       get "blog/show/:id", controller: "blog", action: "show", id: /\d+/
 
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get "blog/:controller/:action(/:id)"
       end
 
@@ -1955,7 +2041,7 @@ class RackMountIntegrationTests < ActiveSupport::TestCase
 
     get "news(.:format)" => "news#index"
 
-    ActiveSupport::Deprecation.silence do
+    ActionDispatch.deprecator.silence do
       get "comment/:id(/:action)" => "comments#show"
       get "ws/:controller(/:action(/:id))", ws: true
       get "account(/:action)" => "account#subscription"
@@ -1965,7 +2051,7 @@ class RackMountIntegrationTests < ActiveSupport::TestCase
 
     get "こんにちは/世界", controller: "news", action: "index"
 
-    ActiveSupport::Deprecation.silence do
+    ActionDispatch.deprecator.silence do
       match ":controller(/:action(/:id))(.:format)", via: :all
     end
 
@@ -2050,6 +2136,7 @@ class RackMountIntegrationTests < ActiveSupport::TestCase
     assert_equal({ controller: "geocode", action: "show", postalcode: "12345" }, @routes.recognize_path("/extended/geocode/12345"))
 
     assert_equal({ controller: "news", action: "index" }, @routes.recognize_path("/", method: :get))
+    assert_equal({ controller: "news", action: "index" }, @routes.recognize_path(nil))
     assert_equal({ controller: "news", action: "index", format: "rss" }, @routes.recognize_path("/news.rss", method: :get))
 
     assert_raise(ActionController::RoutingError) { @routes.recognize_path("/none", method: :get) }
@@ -2076,23 +2163,27 @@ class RackMountIntegrationTests < ActiveSupport::TestCase
   def test_extras
     params = { controller: "people" }
     assert_equal [], @routes.extra_keys(params)
-    assert_equal({ controller: "people", action: "index" }, params)
+    assert_equal({ controller: "people" }, params)
 
     params = { controller: "people", foo: "bar" }
     assert_equal [:foo], @routes.extra_keys(params)
-    assert_equal({ controller: "people", action: "index", foo: "bar" }, params)
+    assert_equal({ controller: "people", foo: "bar" }, params)
 
     params = { controller: "people", action: "create", person: { name: "Josh" } }
     assert_equal [:person], @routes.extra_keys(params)
     assert_equal({ controller: "people", action: "create", person: { name: "Josh" } }, params)
+
+    params = { controller: "people", action: "create", domain: { foo: "Josh" } }
+    assert_equal [:domain], @routes.extra_keys(params)
+    assert_equal({ controller: "people", action: "create", domain: { foo: "Josh" } }, params)
   end
 
   def test_unicode_path
-    assert_equal({ controller: "news", action: "index" }, @routes.recognize_path(URI.parser.escape("こんにちは/世界"), method: :get))
+    assert_equal({ controller: "news", action: "index" }, @routes.recognize_path(URI::RFC2396_PARSER.escape("こんにちは/世界"), method: :get))
   end
 
   def test_downcased_unicode_path
-    assert_equal({ controller: "news", action: "index" }, @routes.recognize_path(URI.parser.escape("こんにちは/世界").downcase, method: :get))
+    assert_equal({ controller: "news", action: "index" }, @routes.recognize_path(URI::RFC2396_PARSER.escape("こんにちは/世界").downcase, method: :get))
   end
 
   private

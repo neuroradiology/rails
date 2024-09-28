@@ -1,12 +1,8 @@
 # frozen_string_literal: true
 
-activesupport_path = File.expand_path("../../../activesupport/lib", __dir__)
-$:.unshift(activesupport_path) if File.directory?(activesupport_path) && !$:.include?(activesupport_path)
-
 require "thor/group"
 require "rails/command"
 
-require "active_support/core_ext/kernel/singleton_class"
 require "active_support/core_ext/array/extract_options"
 require "active_support/core_ext/enumerable"
 require "active_support/core_ext/hash/deep_merge"
@@ -34,13 +30,10 @@ module Rails
       rails: {
         actions: "-a",
         orm: "-o",
-        javascripts: "-j",
-        javascript_engine: "-je",
+        javascripts: ["-j", "--js"],
         resource_controller: "-c",
         scaffold_controller: "-c",
         stylesheets: "-y",
-        stylesheet_engine: "-se",
-        scaffold_stylesheet: "-ss",
         template_engine: "-e",
         test_framework: "-t"
       },
@@ -61,17 +54,18 @@ module Rails
         resource_controller: :controller,
         resource_route: true,
         scaffold_controller: :scaffold_controller,
-        stylesheets: true,
-        stylesheet_engine: :css,
-        scaffold_stylesheet: true,
         system_tests: nil,
         test_framework: nil,
         template_engine: :erb
       }
     }
 
+    # We need to store the RAILS_DEV_PATH in a constant, otherwise the path
+    # can change when we FileUtils.cd.
+    RAILS_DEV_PATH = File.expand_path("../../..", __dir__) # :nodoc:
+
     class << self
-      def configure!(config) #:nodoc:
+      def configure!(config) # :nodoc:
         api_only! if config.api_only
         no_color! unless config.colorize_logging
         aliases.deep_merge! config.aliases
@@ -80,22 +74,27 @@ module Rails
         templates_path.concat config.templates
         templates_path.uniq!
         hide_namespaces(*config.hidden_namespaces)
+        after_generate_callbacks.replace config.after_generate_callbacks
       end
 
-      def templates_path #:nodoc:
+      def templates_path # :nodoc:
         @templates_path ||= []
       end
 
-      def aliases #:nodoc:
+      def aliases # :nodoc:
         @aliases ||= DEFAULT_ALIASES.dup
       end
 
-      def options #:nodoc:
+      def options # :nodoc:
         @options ||= DEFAULT_OPTIONS.dup
       end
 
+      def after_generate_callbacks # :nodoc:
+        @after_generate_callbacks ||= []
+      end
+
       # Hold configured generators fallbacks. If a plugin developer wants a
-      # generator group to fallback to another group in case of missing generators,
+      # generator group to fall back to another group in case of missing generators,
       # they can add a fallback.
       #
       # For example, shoulda is considered a test_framework and is an extension
@@ -124,22 +123,19 @@ module Rails
           template_engine: nil
         )
 
-        if ARGV.first == "mailer"
-          options[:rails][:template_engine] = :erb
-        end
+        options[:mailer] ||= {}
+        options[:mailer][:template_engine] ||= :erb
       end
 
       # Returns an array of generator namespaces that are hidden.
       # Generator namespaces may be hidden for a variety of reasons.
       # Some are aliased such as "rails:migration" and can be
-      # invoked with the shorter "migration", others are private to other generators
-      # such as "css:scaffold".
+      # invoked with the shorter "migration".
       def hidden_namespaces
         @hidden_namespaces ||= begin
           orm      = options[:rails][:orm]
           test     = options[:rails][:test_framework]
           template = options[:rails][:template_engine]
-          css      = options[:rails][:stylesheet_engine]
 
           [
             "rails",
@@ -158,12 +154,9 @@ module Rails
             "#{template}:controller",
             "#{template}:scaffold",
             "#{template}:mailer",
-            "#{css}:scaffold",
-            "#{css}:assets",
-            "css:assets",
-            "css:scaffold",
             "action_text:install",
-            "action_mailbox:install"
+            "action_mailbox:install",
+            "devcontainer"
           ]
         end
       end
@@ -175,7 +168,8 @@ module Rails
 
       # Show help message with available generators.
       def help(command = "generate")
-        puts "Usage: rails #{command} GENERATOR [args] [options]"
+        puts "Usage:"
+        puts "  bin/rails #{command} GENERATOR [args] [options]"
         puts
         puts "General options:"
         puts "  -h, [--help]     # Print generator's options and usage"
@@ -210,10 +204,9 @@ module Rails
         end
 
         rails = groups.delete("rails")
-        rails.map! { |n| n.sub(/^rails:/, "") }
+        rails.map! { |n| n.delete_prefix("rails:") }
         rails.delete("app")
         rails.delete("plugin")
-        rails.delete("encrypted_secrets")
         rails.delete("encrypted_file")
         rails.delete("encryption_key_file")
         rails.delete("master_key")
@@ -238,7 +231,7 @@ module Rails
       #
       # Notice that "rails:generators:webrat" could be loaded as well, what
       # Rails looks for is the first and last parts of the namespace.
-      def find_by_namespace(name, base = nil, context = nil) #:nodoc:
+      def find_by_namespace(name, base = nil, context = nil) # :nodoc:
         lookups = []
         lookups << "#{base}:#{name}"    if base
         lookups << "#{name}:#{context}" if context
@@ -262,24 +255,30 @@ module Rails
         invoke_fallbacks_for(name, base) || invoke_fallbacks_for(context, name)
       end
 
-      # Receives a namespace, arguments and the behavior to invoke the generator.
-      # It's used as the default entry point for generate, destroy and update
+      # Receives a namespace, arguments, and the behavior to invoke the generator.
+      # It's used as the default entry point for generate, destroy, and update
       # commands.
       def invoke(namespace, args = ARGV, config = {})
         names = namespace.to_s.split(":")
         if klass = find_by_namespace(names.pop, names.any? && names.join(":"))
           args << "--help" if args.empty? && klass.arguments.any?(&:required?)
           klass.start(args, config)
+          run_after_generate_callback if config[:behavior] == :invoke
         else
-          options     = sorted_groups.flat_map(&:last)
-          suggestion  = Rails::Command::Spellchecker.suggest(namespace.to_s, from: options)
-          suggestion_msg = "Maybe you meant #{suggestion.inspect}?" if suggestion
+          options = sorted_groups.flat_map(&:last)
+          error = Command::CorrectableNameError.new("Could not find generator '#{namespace}'.", namespace, options)
 
           puts <<~MSG
-            Could not find generator '#{namespace}'. #{suggestion_msg}
+            #{error.detailed_message}
             Run `bin/rails generate --help` for more options.
           MSG
+          exit 1
         end
+      end
+
+      def add_generated_file(file) # :nodoc:
+        (@@generated_files ||= []) << file
+        file
       end
 
       private
@@ -314,6 +313,15 @@ module Rails
 
         def file_lookup_paths # :doc:
           @file_lookup_paths ||= [ "{#{lookup_paths.join(',')}}", "**", "*_generator.rb" ]
+        end
+
+        def run_after_generate_callback
+          if defined?(@@generated_files) && !@@generated_files.empty?
+            @after_generate_callbacks.each do |callback|
+              callback.call(@@generated_files)
+            end
+            @@generated_files = []
+          end
         end
     end
   end

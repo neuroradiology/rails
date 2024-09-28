@@ -32,8 +32,7 @@ Setup
 Currently, Rails plugins are built as gems, _gemified plugins_. They can be shared across
 different Rails applications using RubyGems and Bundler if desired.
 
-### Generate a gemified plugin.
-
+### Generate a Gemified Plugin
 
 Rails ships with a `rails plugin new` command which creates a
 skeleton for developing any kind of Rails extension with the ability
@@ -53,16 +52,31 @@ $ rails plugin new --help
 Testing Your Newly Generated Plugin
 -----------------------------------
 
-You can navigate to the directory that contains the plugin, run the `bundle install` command
- and run the one generated test using the `bin/test` command.
+Navigate to the directory that contains the plugin, and edit `yaffle.gemspec` to
+replace any lines that have `TODO` values:
 
-You should see:
+```ruby
+spec.homepage    = "http://example.com"
+spec.summary     = "Summary of Yaffle."
+spec.description = "Description of Yaffle."
 
-```bash
-  1 runs, 1 assertions, 0 failures, 0 errors, 0 skips
+...
+
+spec.metadata["source_code_uri"] = "http://example.com"
+spec.metadata["changelog_uri"] = "http://example.com"
 ```
 
-This will tell you that everything got generated properly and you are ready to start adding functionality.
+Then run the `bundle install` command.
+
+Now you can run the tests using the `bin/test` command, and you should see:
+
+```bash
+$ bin/test
+...
+1 runs, 1 assertions, 0 failures, 0 errors, 0 skips
+```
+
+This will tell you that everything got generated properly, and you are ready to start adding functionality.
 
 Extending Core Classes
 ----------------------
@@ -86,6 +100,7 @@ end
 Run `bin/test` to run the test. This test should fail because we haven't implemented the `to_squawk` method:
 
 ```bash
+$ bin/test
 E
 
 Error:
@@ -98,7 +113,6 @@ bin/test /path/to/yaffle/test/core_ext_test.rb:4
 .
 
 Finished in 0.003358s, 595.6483 runs/s, 297.8242 assertions/s.
-
 2 runs, 1 assertions, 0 failures, 1 errors, 0 skips
 ```
 
@@ -109,6 +123,7 @@ In `lib/yaffle.rb`, add `require "yaffle/core_ext"`:
 ```ruby
 # yaffle/lib/yaffle.rb
 
+require "yaffle/version"
 require "yaffle/railtie"
 require "yaffle/core_ext"
 
@@ -132,14 +147,15 @@ end
 To test that your method does what it says it does, run the unit tests with `bin/test` from your plugin directory.
 
 ```bash
-  2 runs, 2 assertions, 0 failures, 0 errors, 0 skips
+$ bin/test
+...
+2 runs, 2 assertions, 0 failures, 0 errors, 0 skips
 ```
 
-To see this in action, change to the `test/dummy` directory, fire up a console, and start squawking:
+To see this in action, change to the `test/dummy` directory, start `bin/rails console`, and commence squawking:
 
-```bash
-$ bin/rails console
->> "Hello World".to_squawk
+```irb
+irb> "Hello World".to_squawk
 => "squawk! Hello World"
 ```
 
@@ -163,6 +179,7 @@ end
 ```ruby
 # yaffle/lib/yaffle.rb
 
+require "yaffle/version"
 require "yaffle/railtie"
 require "yaffle/core_ext"
 require "yaffle/acts_as_yaffle"
@@ -207,7 +224,8 @@ end
 
 When you run `bin/test`, you should see the following:
 
-```
+```bash
+$ bin/test
 # Running:
 
 ..E
@@ -231,7 +249,6 @@ bin/test /path/to/yaffle/test/acts_as_yaffle_test.rb:4
 
 
 Finished in 0.004812s, 831.2949 runs/s, 415.6475 assertions/s.
-
 4 runs, 2 assertions, 0 failures, 2 errors, 0 skips
 ```
 
@@ -262,7 +279,9 @@ like yaffles.
 class Hickwall < ApplicationRecord
   acts_as_yaffle
 end
+```
 
+```ruby
 # test/dummy/app/models/wickwall.rb
 
 class Wickwall < ApplicationRecord
@@ -285,7 +304,9 @@ module Yaffle
     end
   end
 end
+```
 
+```ruby
 # test/dummy/app/models/application_record.rb
 
 class ApplicationRecord < ActiveRecord::Base
@@ -297,7 +318,8 @@ end
 
 You can then return to the root directory (`cd ../..`) of your plugin and rerun the tests using `bin/test`.
 
-```
+```bash
+$ bin/test
 # Running:
 
 .E
@@ -321,7 +343,6 @@ bin/test /path/to/yaffle/test/acts_as_yaffle_test.rb:8
 .
 
 Finished in 0.008263s, 484.0999 runs/s, 242.0500 assertions/s.
-
 4 runs, 2 assertions, 0 failures, 2 errors, 0 skips
 ```
 
@@ -341,7 +362,9 @@ module Yaffle
     end
   end
 end
+```
 
+```ruby
 # test/dummy/app/models/application_record.rb
 
 class ApplicationRecord < ActiveRecord::Base
@@ -354,7 +377,9 @@ end
 When you run `bin/test`, you should see the tests all pass:
 
 ```bash
-  4 runs, 4 assertions, 0 failures, 0 errors, 0 skips
+$ bin/test
+...
+4 runs, 4 assertions, 0 failures, 0 errors, 0 skips
 ```
 
 ### Add an Instance Method
@@ -391,7 +416,7 @@ class ActsAsYaffleTest < ActiveSupport::TestCase
 end
 ```
 
-Run the test to make sure the last two tests fail with an error that contains "NoMethodError: undefined method `squawk'",
+Run the test to make sure the last two tests fail with an error that contains "NoMethodError: undefined method \`squawk'",
 then update `acts_as_yaffle.rb` to look like this:
 
 ```ruby
@@ -414,7 +439,9 @@ module Yaffle
     end
   end
 end
+```
 
+```ruby
 # test/dummy/app/models/application_record.rb
 
 class ApplicationRecord < ActiveRecord::Base
@@ -424,10 +451,12 @@ class ApplicationRecord < ActiveRecord::Base
 end
 ```
 
-Run `bin/test` one final time and you should see:
+Run `bin/test` one final time, and you should see:
 
-```
-  6 runs, 6 assertions, 0 failures, 0 errors, 0 skips
+```bash
+$ bin/test
+...
+6 runs, 6 assertions, 0 failures, 0 errors, 0 skips
 ```
 
 NOTE: The use of `write_attribute` to write to the field in model is just one example of how a plugin can interact with the model, and will not always be the right method to use. For example, you could also use:
@@ -455,12 +484,28 @@ gem "yaffle", git: "https://github.com/rails/yaffle.git"
 After running `bundle install`, your gem functionality will be available to the application.
 
 When the gem is ready to be shared as a formal release, it can be published to [RubyGems](https://rubygems.org).
+
+Alternatively, you can benefit from Bundler's Rake tasks. You can see a full list with the following:
+
+```bash
+$ bundle exec rake -T
+
+$ bundle exec rake build
+# Build yaffle-0.1.0.gem into the pkg directory
+
+$ bundle exec rake install
+# Build and install yaffle-0.1.0.gem into system gems
+
+$ bundle exec rake release
+# Create tag v0.1.0 and build and push yaffle-0.1.0.gem to Rubygems
+```
+
 For more information about publishing gems to RubyGems, see: [Publishing your gem](https://guides.rubygems.org/publishing).
 
 RDoc Documentation
 ------------------
 
-Once your plugin is stable and you are ready to deploy, do everyone else a favor and document it! Luckily, writing documentation for your plugin is easy.
+Once your plugin is stable, and you are ready to deploy, do everyone else a favor and document it! Luckily, writing documentation for your plugin is easy.
 
 The first step is to update the README file with detailed information about how to use your plugin. A few key things to include are:
 
@@ -469,7 +514,7 @@ The first step is to update the README file with detailed information about how 
 * How to add the functionality to the app (several examples of common use cases)
 * Warnings, gotchas or tips that might help users and save them time
 
-Once your README is solid, go through and add rdoc comments to all of the methods that developers will use. It's also customary to add `#:nodoc:` comments to those parts of the code that are not included in the public API.
+Once your README is solid, go through and add RDoc comments to all the methods that developers will use. It's also customary to add `# :nodoc:` comments to those parts of the code that are not included in the public API.
 
 Once your comments are good to go, navigate to your plugin directory and run:
 
@@ -479,6 +524,6 @@ $ bundle exec rake rdoc
 
 ### References
 
-* [Developing a RubyGem using Bundler](https://github.com/radar/guides/blob/master/gem-development.md)
+* [Developing a RubyGem using Bundler](https://bundler.io/guides/creating_gem.html)
 * [Using .gemspecs as Intended](https://yehudakatz.com/2010/04/02/using-gemspecs-as-intended/)
 * [Gemspec Reference](https://guides.rubygems.org/specification-reference/)

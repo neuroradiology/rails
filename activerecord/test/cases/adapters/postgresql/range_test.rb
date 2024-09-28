@@ -9,36 +9,38 @@ class PostgresqlRange < ActiveRecord::Base
 end
 
 class PostgresqlRangeTest < ActiveRecord::PostgreSQLTestCase
-  self.use_transactional_tests = false
   include ConnectionHelper
   include InTimeZone
 
   def setup
-    @connection = PostgresqlRange.connection
-    begin
-      @connection.transaction do
-        @connection.execute <<~SQL
-          CREATE TYPE floatrange AS RANGE (
-              subtype = float8,
-              subtype_diff = float8mi
-          );
-        SQL
+    @connection = PostgresqlRange.lease_connection
+    @connection.transaction do
+      @connection.execute <<~SQL
+        CREATE TYPE floatrange AS RANGE (
+            subtype = float8,
+            subtype_diff = float8mi
+        );
 
-        @connection.create_table("postgresql_ranges") do |t|
-          t.daterange :date_range
-          t.numrange :num_range
-          t.tsrange :ts_range
-          t.tstzrange :tstz_range
-          t.int4range :int4_range
-          t.int8range :int8_range
-        end
+        CREATE TYPE stringrange AS RANGE (
+            subtype = varchar
+        );
+      SQL
 
-        @connection.add_column "postgresql_ranges", "float_range", "floatrange"
+      @connection.create_table("postgresql_ranges") do |t|
+        t.daterange :date_range
+        t.numrange  :num_range
+        t.tsrange   :ts_range
+        t.tsrange   :ts_ranges, array: true
+        t.tstzrange :tstz_range
+        t.tstzrange :tstz_ranges, array: true
+        t.int4range :int4_range
+        t.int8range :int8_range
       end
-      PostgresqlRange.reset_column_information
-    rescue ActiveRecord::StatementInvalid
-      skip "do not test on PG without range"
+
+      @connection.add_column "postgresql_ranges", "float_range", "floatrange"
+      @connection.add_column "postgresql_ranges", "string_range", "stringrange"
     end
+    PostgresqlRange.reset_column_information
 
     insert_range(id: 101,
                  date_range: "[''2012-01-02'', ''2012-01-04'']",
@@ -96,6 +98,7 @@ class PostgresqlRangeTest < ActiveRecord::PostgreSQLTestCase
   teardown do
     @connection.drop_table "postgresql_ranges", if_exists: true
     @connection.execute "DROP TYPE IF EXISTS floatrange"
+    @connection.execute "DROP TYPE IF EXISTS stringrange"
     reset_connection
   end
 
@@ -141,9 +144,10 @@ class PostgresqlRangeTest < ActiveRecord::PostgreSQLTestCase
   end
 
   def test_tsrange_values
-    tz = ::ActiveRecord::Base.default_timezone
-    assert_equal Time.send(tz, 2010, 1, 1, 14, 30, 0)..Time.send(tz, 2011, 1, 1, 14, 30, 0), @first_range.ts_range
-    assert_equal Time.send(tz, 2010, 1, 1, 14, 30, 0)...Time.send(tz, 2011, 1, 1, 14, 30, 0), @second_range.ts_range
+    tz = ::ActiveRecord.default_timezone
+    assert_equal Time.public_send(tz, 2010, 1, 1, 14, 30, 0)..Time.public_send(tz, 2011, 1, 1, 14, 30, 0), @first_range.ts_range
+    assert_equal Time.public_send(tz, 2010, 1, 1, 14, 30, 0)...Time.public_send(tz, 2011, 1, 1, 14, 30, 0), @second_range.ts_range
+    assert_equal Time.public_send(tz, 2010, 1, 1, 14, 30, 0)...nil, @third_range.ts_range
     assert_equal(-Float::INFINITY...Float::INFINITY, @fourth_range.ts_range)
     assert_nil @empty_range.ts_range
   end
@@ -151,6 +155,7 @@ class PostgresqlRangeTest < ActiveRecord::PostgreSQLTestCase
   def test_tstzrange_values
     assert_equal Time.parse("2010-01-01 09:30:00 UTC")..Time.parse("2011-01-01 17:30:00 UTC"), @first_range.tstz_range
     assert_equal Time.parse("2010-01-01 09:30:00 UTC")...Time.parse("2011-01-01 17:30:00 UTC"), @second_range.tstz_range
+    assert_equal Time.parse("2010-01-01 09:30:00 UTC")...nil, @third_range.tstz_range
     assert_equal(-Float::INFINITY...Float::INFINITY, @fourth_range.tstz_range)
     assert_nil @empty_range.tstz_range
   end
@@ -183,6 +188,75 @@ class PostgresqlRangeTest < ActiveRecord::PostgreSQLTestCase
     end
   end
 
+  def test_timezone_awareness_endless_tzrange
+    tz = "Pacific Time (US & Canada)"
+
+    in_time_zone tz do
+      PostgresqlRange.reset_column_information
+      time_string = Time.current.to_s
+      time = Time.zone.parse(time_string)
+
+      record = PostgresqlRange.new(tstz_range: time_string...)
+      assert_equal time..., record.tstz_range
+      assert_equal ActiveSupport::TimeZone[tz], record.tstz_range.begin.time_zone
+
+      record.save!
+      record.reload
+
+      assert_equal time..., record.tstz_range
+      assert_equal ActiveSupport::TimeZone[tz], record.tstz_range.begin.time_zone
+    end
+  end
+
+  def test_timezone_awareness_beginless_tzrange
+    tz = "Pacific Time (US & Canada)"
+
+    in_time_zone tz do
+      PostgresqlRange.reset_column_information
+      time_string = Time.current.to_s
+      time = Time.zone.parse(time_string)
+
+      record = PostgresqlRange.new(tstz_range: ..time_string)
+      assert_equal nil..time, record.tstz_range
+      assert_equal ActiveSupport::TimeZone[tz], record.tstz_range.end.time_zone
+
+      record.save!
+      record.reload
+
+      assert_equal nil..time, record.tstz_range
+      assert_equal ActiveSupport::TimeZone[tz], record.tstz_range.end.time_zone
+    end
+  end
+
+  def test_timezone_array_awareness_tzrange
+    tz = "Pacific Time (US & Canada)"
+
+    in_time_zone tz do
+      PostgresqlRange.reset_column_information
+
+      from_time_string = Time.current.to_s
+      from_time = Time.zone.parse(from_time_string)
+      to_time_string = (from_time + 1.hour).to_s
+      to_time = Time.zone.parse(to_time_string)
+
+      record = PostgresqlRange.new(tstz_ranges: [from_time_string...to_time_string, from_time_string..to_time_string, from_time_string..., ..to_time_string])
+      assert_equal [from_time...to_time, from_time..to_time, from_time..., ..to_time], record.tstz_ranges
+      record.tstz_ranges.each do |range|
+        assert_equal ActiveSupport::TimeZone[tz], range.begin.time_zone if range.begin
+        assert_equal ActiveSupport::TimeZone[tz], range.end.time_zone if range.end
+      end
+
+      record.save!
+      record.reload
+
+      assert_equal [from_time...to_time, from_time..to_time, from_time...nil, nil..to_time], record.tstz_ranges
+      record.tstz_ranges.each do |range|
+        assert_equal ActiveSupport::TimeZone[tz], range.begin.time_zone if range.begin
+        assert_equal ActiveSupport::TimeZone[tz], range.end.time_zone if range.end
+      end
+    end
+  end
+
   def test_create_tstzrange
     tstzrange = Time.parse("2010-01-01 14:30:00 +0100")...Time.parse("2011-02-02 14:30:00 CDT")
     round_trip(@new_range, :tstz_range, tstzrange)
@@ -197,18 +271,40 @@ class PostgresqlRangeTest < ActiveRecord::PostgreSQLTestCase
                           Time.parse("2010-01-01 14:30:00 +0100")...Time.parse("2010-01-01 13:30:00 +0000"))
   end
 
+  def test_escaped_tstzrange
+    assert_equal_round_trip(@first_range, :tstz_range,
+                            Time.parse("-1000-01-01 14:30:00 CDT")...Time.parse("2020-02-02 14:30:00 CET"))
+  end
+
+  def test_unbounded_tstzrange
+    assert_equal_round_trip @first_range, :tstz_range, Time.parse("2010-01-01 14:30:00 CDT")...nil
+    assert_equal_round_trip @first_range, :tstz_range, nil..Time.parse("2010-01-01 14:30:00 CDT")
+  end
+
   def test_create_tsrange
-    tz = ::ActiveRecord::Base.default_timezone
+    tz = ::ActiveRecord.default_timezone
     assert_equal_round_trip(@new_range, :ts_range,
-                            Time.send(tz, 2010, 1, 1, 14, 30, 0)...Time.send(tz, 2011, 2, 2, 14, 30, 0))
+                            Time.public_send(tz, 2010, 1, 1, 14, 30, 0)...Time.public_send(tz, 2011, 2, 2, 14, 30, 0))
   end
 
   def test_update_tsrange
-    tz = ::ActiveRecord::Base.default_timezone
+    tz = ::ActiveRecord.default_timezone
     assert_equal_round_trip(@first_range, :ts_range,
-                            Time.send(tz, 2010, 1, 1, 14, 30, 0)...Time.send(tz, 2011, 2, 2, 14, 30, 0))
+                            Time.public_send(tz, 2010, 1, 1, 14, 30, 0)...Time.public_send(tz, 2011, 2, 2, 14, 30, 0))
     assert_nil_round_trip(@first_range, :ts_range,
-                          Time.send(tz, 2010, 1, 1, 14, 30, 0)...Time.send(tz, 2010, 1, 1, 14, 30, 0))
+                          Time.public_send(tz, 2010, 1, 1, 14, 30, 0)...Time.public_send(tz, 2010, 1, 1, 14, 30, 0))
+  end
+
+  def test_escaped_tsrange
+    tz = ::ActiveRecord.default_timezone
+    assert_equal_round_trip(@first_range, :ts_range,
+                            Time.public_send(tz, -1000, 1, 1, 14, 30, 0)...Time.public_send(tz, 2020, 2, 2, 14, 30, 0))
+  end
+
+  def test_unbounded_tsrange
+    tz = ::ActiveRecord.default_timezone
+    assert_equal_round_trip @first_range, :ts_range, Time.public_send(tz, 2010, 1, 1, 14, 30, 0)...nil
+    assert_equal_round_trip @first_range, :ts_range, nil..Time.public_send(tz, 2010, 1, 1, 14, 30, 0)
   end
 
   def test_timezone_awareness_tsrange
@@ -231,6 +327,75 @@ class PostgresqlRangeTest < ActiveRecord::PostgreSQLTestCase
     end
   end
 
+  def test_timezone_awareness_endless_tsrange
+    tz = "Pacific Time (US & Canada)"
+
+    in_time_zone tz do
+      PostgresqlRange.reset_column_information
+      time_string = Time.current.to_s
+      time = Time.zone.parse(time_string)
+
+      record = PostgresqlRange.new(ts_range: time_string...)
+      assert_equal time..., record.ts_range
+      assert_equal ActiveSupport::TimeZone[tz], record.ts_range.begin.time_zone
+
+      record.save!
+      record.reload
+
+      assert_equal time..., record.ts_range
+      assert_equal ActiveSupport::TimeZone[tz], record.ts_range.begin.time_zone
+    end
+  end
+
+  def test_timezone_awareness_beginless_tsrange
+    tz = "Pacific Time (US & Canada)"
+
+    in_time_zone tz do
+      PostgresqlRange.reset_column_information
+      time_string = Time.current.to_s
+      time = Time.zone.parse(time_string)
+
+      record = PostgresqlRange.new(ts_range: ..time_string)
+      assert_equal nil..time, record.ts_range
+      assert_equal ActiveSupport::TimeZone[tz], record.ts_range.end.time_zone
+
+      record.save!
+      record.reload
+
+      assert_equal nil..time, record.ts_range
+      assert_equal ActiveSupport::TimeZone[tz], record.ts_range.end.time_zone
+    end
+  end
+
+  def test_timezone_array_awareness_tsrange
+    tz = "Pacific Time (US & Canada)"
+
+    in_time_zone tz do
+      PostgresqlRange.reset_column_information
+
+      from_time_string = Time.current.to_s
+      from_time = Time.zone.parse(from_time_string)
+      to_time_string = (from_time + 1.hour).to_s
+      to_time = Time.zone.parse(to_time_string)
+
+      record = PostgresqlRange.new(ts_ranges: [from_time_string...to_time_string, from_time_string..to_time_string, from_time_string..., ..to_time_string])
+      assert_equal [from_time...to_time, from_time..to_time, from_time..., ..to_time], record.ts_ranges
+      record.ts_ranges.each do |range|
+        assert_equal ActiveSupport::TimeZone[tz], range.begin.time_zone if range.begin
+        assert_equal ActiveSupport::TimeZone[tz], range.end.time_zone if range.end
+      end
+
+      record.save!
+      record.reload
+
+      assert_equal [from_time...to_time, from_time..to_time, from_time..., ..to_time], record.ts_ranges
+      record.ts_ranges.each do |range|
+        assert_equal ActiveSupport::TimeZone[tz], range.begin.time_zone if range.begin
+        assert_equal ActiveSupport::TimeZone[tz], range.end.time_zone if range.end
+      end
+    end
+  end
+
   def test_create_tstzrange_preserve_usec
     tstzrange = Time.parse("2010-01-01 14:30:00.670277 +0100")...Time.parse("2011-02-02 14:30:00.745125 CDT")
     round_trip(@new_range, :tstz_range, tstzrange)
@@ -245,18 +410,18 @@ class PostgresqlRangeTest < ActiveRecord::PostgreSQLTestCase
                           Time.parse("2010-01-01 14:30:00.245124 +0100")...Time.parse("2010-01-01 13:30:00.245124 +0000"))
   end
 
-  def test_create_tsrange_preseve_usec
-    tz = ::ActiveRecord::Base.default_timezone
+  def test_create_tsrange_preserve_usec
+    tz = ::ActiveRecord.default_timezone
     assert_equal_round_trip(@new_range, :ts_range,
-                            Time.send(tz, 2010, 1, 1, 14, 30, 0, 125435)...Time.send(tz, 2011, 2, 2, 14, 30, 0, 225435))
+                            Time.public_send(tz, 2010, 1, 1, 14, 30, 0, 125435)...Time.public_send(tz, 2011, 2, 2, 14, 30, 0, 225435))
   end
 
   def test_update_tsrange_preserve_usec
-    tz = ::ActiveRecord::Base.default_timezone
+    tz = ::ActiveRecord.default_timezone
     assert_equal_round_trip(@first_range, :ts_range,
-                            Time.send(tz, 2010, 1, 1, 14, 30, 0, 142432)...Time.send(tz, 2011, 2, 2, 14, 30, 0, 224242))
+                            Time.public_send(tz, 2010, 1, 1, 14, 30, 0, 142432)...Time.public_send(tz, 2011, 2, 2, 14, 30, 0, 224242))
     assert_nil_round_trip(@first_range, :ts_range,
-                          Time.send(tz, 2010, 1, 1, 14, 30, 0, 142432)...Time.send(tz, 2010, 1, 1, 14, 30, 0, 142432))
+                          Time.public_send(tz, 2010, 1, 1, 14, 30, 0, 142432)...Time.public_send(tz, 2010, 1, 1, 14, 30, 0, 142432))
   end
 
   def test_timezone_awareness_tsrange_preserve_usec
@@ -363,6 +528,16 @@ class PostgresqlRangeTest < ActiveRecord::PostgreSQLTestCase
     end
   end
 
+  def test_ranges_correctly_unescape_output
+    @connection.execute(<<~SQL)
+      INSERT INTO postgresql_ranges (id, string_range)
+      VALUES (106, '["ca""t","do\\\\g")')
+    SQL
+
+    escaped_range = PostgresqlRange.find(106)
+    assert_equal('ca"t'...'do\\g', escaped_range.string_range)
+  end
+
   def test_infinity_values
     PostgresqlRange.create!(int4_range: 1..Float::INFINITY,
                             int8_range: -Float::INFINITY..0,
@@ -375,20 +550,32 @@ class PostgresqlRangeTest < ActiveRecord::PostgreSQLTestCase
     assert_equal(-Float::INFINITY...Float::INFINITY, record.float_range)
   end
 
-  if RUBY_VERSION >= "2.6"
-    def test_endless_range_values
-      record = PostgresqlRange.create!(
-        int4_range: eval("1.."),
-        int8_range: eval("10.."),
-        float_range: eval("0.5..")
-      )
+  def test_endless_range_values
+    record = PostgresqlRange.create!(
+      int4_range: 1..,
+      int8_range: 10..,
+      float_range: 0.5..
+    )
 
-      record = PostgresqlRange.find(record.id)
+    record = PostgresqlRange.find(record.id)
 
-      assert_equal 1...Float::INFINITY, record.int4_range
-      assert_equal 10...Float::INFINITY, record.int8_range
-      assert_equal 0.5...Float::INFINITY, record.float_range
-    end
+    assert_equal 1...Float::INFINITY, record.int4_range
+    assert_equal 10...Float::INFINITY, record.int8_range
+    assert_equal 0.5...Float::INFINITY, record.float_range
+  end
+
+  def test_empty_string_range_values
+    record = PostgresqlRange.create!(
+      int4_range: "",
+      int8_range: "",
+      float_range: ""
+    )
+
+    record = PostgresqlRange.find(record.id)
+
+    assert_nil record.int4_range
+    assert_nil record.int8_range
+    assert_nil record.float_range
   end
 
   private

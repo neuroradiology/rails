@@ -3,12 +3,12 @@
 module ActiveRecord
   module Associations
     # = Active Record Has Many Through Association
-    class HasManyThroughAssociation < HasManyAssociation #:nodoc:
+    class HasManyThroughAssociation < HasManyAssociation # :nodoc:
       include ThroughAssociation
 
       def initialize(owner, reflection)
         super
-        @through_records = {}
+        @through_records = {}.compare_by_identity
       end
 
       def concat(*records)
@@ -54,21 +54,28 @@ module ActiveRecord
         # However, after insert_record has been called, the cache is cleared in
         # order to allow multiple instances of the same record in an association.
         def build_through_record(record)
-          @through_records[record.object_id] ||= begin
+          @through_records[record] ||= begin
             ensure_mutable
 
             attributes = through_scope_attributes
             attributes[source_reflection.name] = record
-            attributes[source_reflection.foreign_type] = options[:source_type] if options[:source_type]
 
-            through_association.build(attributes)
+            through_association.build(attributes).tap do |new_record|
+              new_record.send("#{source_reflection.foreign_type}=", options[:source_type]) if options[:source_type]
+            end
           end
         end
 
+        attr_reader :through_scope
+
         def through_scope_attributes
-          scope.where_values_hash(through_association.reflection.name.to_s).
-            except!(through_association.reflection.foreign_key,
-                    through_association.reflection.klass.inheritance_column)
+          scope = through_scope || self.scope
+          attributes = scope.where_values_hash(through_association.reflection.klass.table_name)
+          except_keys = [
+            *Array(through_association.reflection.foreign_key),
+            through_association.reflection.klass.inheritance_column
+          ]
+          attributes.except!(*except_keys)
         end
 
         def save_through_record(record)
@@ -77,12 +84,13 @@ module ActiveRecord
             association.save!
           end
         ensure
-          @through_records.delete(record.object_id)
+          @through_records.delete(record)
         end
 
         def build_record(attributes)
           ensure_not_nested
 
+          @through_scope = scope
           record = super
 
           inverse = source_reflection.inverse_of
@@ -95,6 +103,8 @@ module ActiveRecord
           end
 
           record
+        ensure
+          @through_scope = nil
         end
 
         def remove_records(existing_records, records, method)
@@ -103,7 +113,7 @@ module ActiveRecord
         end
 
         def target_reflection_has_associated_record?
-          !(through_reflection.belongs_to? && owner[through_reflection.foreign_key].blank?)
+          !(through_reflection.belongs_to? && Array(through_reflection.foreign_key).all? { |foreign_key_column| owner[foreign_key_column].blank? })
         end
 
         def update_through_counter?(method)
@@ -130,7 +140,7 @@ module ActiveRecord
 
           case method
           when :destroy
-            if scope.klass.primary_key
+            if scope.model.primary_key
               count = scope.destroy_all.count(&:destroyed?)
             else
               scope.each(&:_run_destroy_callbacks)
@@ -202,12 +212,14 @@ module ActiveRecord
               end
             end
 
-            @through_records.delete(record.object_id)
+            @through_records.delete(record)
           end
         end
 
-        def find_target
+        def find_target(async: false)
+          raise NotImplementedError, "No async loading for HasManyThroughAssociation yet" if async
           return [] unless target_reflection_has_associated_record?
+          return scope.to_a if disable_joins
           super
         end
 

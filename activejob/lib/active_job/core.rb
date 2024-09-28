@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 module ActiveJob
+  # = Active Job \Core
+  #
   # Provides general behavior that will be included into every Active Job
   # object that inherits from ActiveJob::Base.
   module Core
@@ -10,7 +12,7 @@ module ActiveJob
     attr_accessor :arguments
     attr_writer :serialized_arguments
 
-    # Timestamp when the job should be performed
+    # Time when the job should be performed
     attr_accessor :scheduled_at
 
     # Job Identifier
@@ -42,6 +44,16 @@ module ActiveJob
 
     # Track when a job was enqueued
     attr_accessor :enqueued_at
+
+    # Track whether the adapter received the job successfully.
+    attr_writer :successfully_enqueued # :nodoc:
+
+    def successfully_enqueued?
+      @successfully_enqueued
+    end
+
+    # Track any exceptions raised by the backend so callers can inspect the errors.
+    attr_accessor :enqueue_error
 
     # These methods will be included into any Active Job object, adding
     # helpers for de/serialization and creation of job instances.
@@ -82,11 +94,13 @@ module ActiveJob
       @arguments  = arguments
       @job_id     = SecureRandom.uuid
       @queue_name = self.class.queue_name
+      @scheduled_at = nil
       @priority   = self.class.priority
       @executions = 0
       @exception_executions = {}
+      @timezone   = Time.zone&.name
     end
-    ruby2_keywords(:initialize) if respond_to?(:ruby2_keywords, true)
+    ruby2_keywords(:initialize)
 
     # Returns a hash with the job data that can safely be passed to the
     # queuing adapter.
@@ -101,8 +115,9 @@ module ActiveJob
         "executions" => executions,
         "exception_executions" => exception_executions,
         "locale"     => I18n.locale.to_s,
-        "timezone"   => Time.zone&.name,
-        "enqueued_at" => Time.now.utc.iso8601
+        "timezone"   => timezone,
+        "enqueued_at" => Time.now.utc.iso8601(9),
+        "scheduled_at" => scheduled_at ? scheduled_at.utc.iso8601(9) : nil,
       }
     end
 
@@ -142,7 +157,18 @@ module ActiveJob
       self.exception_executions = job_data["exception_executions"]
       self.locale               = job_data["locale"] || I18n.locale.to_s
       self.timezone             = job_data["timezone"] || Time.zone&.name
-      self.enqueued_at          = job_data["enqueued_at"]
+      self.enqueued_at          = Time.iso8601(job_data["enqueued_at"]) if job_data["enqueued_at"]
+      self.scheduled_at         = Time.iso8601(job_data["scheduled_at"]) if job_data["scheduled_at"]
+    end
+
+    # Configures the job with the given options.
+    def set(options = {}) # :nodoc:
+      self.scheduled_at = options[:wait].seconds.from_now if options[:wait]
+      self.scheduled_at = options[:wait_until] if options[:wait_until]
+      self.queue_name   = self.class.queue_name_from_part(options[:queue]) if options[:queue]
+      self.priority     = options[:priority].to_i if options[:priority]
+
+      self
     end
 
     private
@@ -170,7 +196,7 @@ module ActiveJob
       end
 
       def arguments_serialized?
-        defined?(@serialized_arguments) && @serialized_arguments
+        @serialized_arguments
       end
   end
 end

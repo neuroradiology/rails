@@ -41,10 +41,6 @@ module Arel # :nodoc: all
           visit(o.expr, collector) << " )"
         end
 
-        def visit_Arel_Nodes_BindParam(o, collector)
-          collector.add_bind(o.value) { |i| "$#{i}" }
-        end
-
         def visit_Arel_Nodes_GroupingElement(o, collector)
           collector << "( "
           visit(o.expr, collector) << " )"
@@ -67,7 +63,7 @@ module Arel # :nodoc: all
 
         def visit_Arel_Nodes_Lateral(o, collector)
           collector << "LATERAL "
-          grouping_parentheses o, collector
+          grouping_parentheses o.expr, collector
         end
 
         def visit_Arel_Nodes_IsNotDistinctFrom(o, collector)
@@ -82,26 +78,10 @@ module Arel # :nodoc: all
           visit o.right, collector
         end
 
-        def visit_Arel_Nodes_NullsFirst(o, collector)
-          visit o.expr, collector
-          collector << " NULLS FIRST"
-        end
+        BIND_BLOCK = proc { |i| "$#{i}" }
+        private_constant :BIND_BLOCK
 
-        def visit_Arel_Nodes_NullsLast(o, collector)
-          visit o.expr, collector
-          collector << " NULLS LAST"
-        end
-
-        # Used by Lateral visitor to enclose select queries in parentheses
-        def grouping_parentheses(o, collector)
-          if o.expr.is_a? Nodes::SelectStatement
-            collector << "("
-            visit o.expr, collector
-            collector << ")"
-          else
-            visit o.expr, collector
-          end
-        end
+        def bind_block; BIND_BLOCK; end
 
         # Utilized by GroupingSet, Cube & RollUp visitors to
         # handle grouping aggregation semantics

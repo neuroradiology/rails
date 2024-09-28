@@ -3,7 +3,7 @@
 require "cases/helper"
 require "support/schema_dumping_helper"
 
-if ActiveRecord::Base.connection.supports_comments?
+if ActiveRecord::Base.lease_connection.supports_comments?
   class CommentTest < ActiveRecord::TestCase
     include SchemaDumpingHelper
 
@@ -18,7 +18,7 @@ if ActiveRecord::Base.connection.supports_comments?
     end
 
     setup do
-      @connection = ActiveRecord::Base.connection
+      @connection = ActiveRecord::Base.lease_connection
 
       @connection.create_table("commenteds", comment: "A table with comment", force: true) do |t|
         t.string  "name",    comment: "Comment should help clarify the column purpose"
@@ -39,7 +39,7 @@ if ActiveRecord::Base.connection.supports_comments?
       end
 
       @connection.create_table("pk_commenteds", comment: "Table comment", id: false, force: true) do |t|
-        t.integer :id, comment: "Primary key comment", primary_key: true
+        t.primary_key :id, comment: "Primary key comment"
       end
 
       Commented.reset_column_information
@@ -87,11 +87,9 @@ if ActiveRecord::Base.connection.supports_comments?
     end
 
     def test_add_index_with_comment_later
-      unless current_adapter?(:OracleAdapter)
-        @connection.add_index :commenteds, :obvious, name: "idx_obvious", comment: "We need to see obvious comments"
-        index = @connection.indexes("commenteds").find { |idef| idef.name == "idx_obvious" }
-        assert_equal "We need to see obvious comments", index.comment
-      end
+      @connection.add_index :commenteds, :obvious, name: "idx_obvious", comment: "We need to see obvious comments"
+      index = @connection.indexes("commenteds").find { |idef| idef.name == "idx_obvious" }
+      assert_equal "We need to see obvious comments", index.comment
     end
 
     def test_add_comment_to_column
@@ -114,6 +112,17 @@ if ActiveRecord::Base.connection.supports_comments?
       assert_nil column.comment
     end
 
+    def test_rename_column_preserves_comment
+      @connection.add_column    :commenteds, :rating, :string, comment: "I am running out of imagination"
+      @connection.rename_column :commenteds, :rating, :new_rating
+
+      Commented.reset_column_information
+      column = Commented.columns_hash["new_rating"]
+
+      assert_equal :string, column.type
+      assert_equal "I am running out of imagination", column.comment
+    end
+
     def test_schema_dump_with_comments
       # Do all the stuff from other tests
       @connection.add_column    :commenteds, :rating, :integer, comment: "I am running out of imagination"
@@ -128,13 +137,9 @@ if ActiveRecord::Base.connection.supports_comments?
       assert_match %r[t\.string\s+"name",\s+comment: "Comment should help clarify the column purpose"], output
       assert_match %r[t\.string\s+"obvious"\n], output
       assert_match %r[t\.string\s+"content",\s+comment: "Whoa, content describes itself!"], output
-      if current_adapter?(:OracleAdapter)
-        assert_match %r[t\.integer\s+"rating",\s+precision: 38,\s+comment: "I am running out of imagination"], output
-      else
-        assert_match %r[t\.integer\s+"rating",\s+comment: "I am running out of imagination"], output
-        assert_match %r[t\.index\s+.+\s+comment: "\\\"Very important\\\" index that powers all the performance.\\nAnd it's fun!"], output
-        assert_match %r[t\.index\s+.+\s+name: "idx_obvious",\s+comment: "We need to see obvious comments"], output
-      end
+      assert_match %r[t\.integer\s+"rating",\s+comment: "I am running out of imagination"], output
+      assert_match %r[t\.index\s+.+\s+comment: "\\"Very important\\" index that powers all the performance.\\nAnd it's fun!"], output
+      assert_match %r[t\.index\s+.+\s+name: "idx_obvious",\s+comment: "We need to see obvious comments"], output
     end
 
     def test_schema_dump_omits_blank_comments
@@ -167,9 +172,13 @@ if ActiveRecord::Base.connection.supports_comments?
     end
 
     def test_change_column_comment
-      @connection.change_column_comment :commenteds, :name, "Edited column comment"
-      column = Commented.columns_hash["name"]
+      @connection.change_column_comment :commenteds, :id, "Edited column comment"
+      column = Commented.columns_hash["id"]
       assert_equal "Edited column comment", column.comment
+
+      if current_adapter?(:Mysql2Adapter, :TrilogyAdapter)
+        assert_predicate column, :auto_increment?
+      end
     end
 
     def test_change_column_comment_to_nil
@@ -186,8 +195,7 @@ if ActiveRecord::Base.connection.supports_comments?
 
     def test_schema_dump_with_primary_key_comment
       output = dump_table_schema "pk_commenteds"
-      assert_match %r[create_table "pk_commenteds",.*\s+comment: "Table comment"], output
-      assert_no_match %r[create_table "pk_commenteds",.*\s+comment: "Primary key comment"], output
+      assert_match %r[create_table "pk_commenteds", id: { comment: "Primary key comment" }.*, comment: "Table comment"], output
     end
   end
 end

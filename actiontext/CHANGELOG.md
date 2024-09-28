@@ -1,21 +1,44 @@
-*   The `fill_in_rich_text_area` system test helper locates a Trix editor and fills it in with the given HTML:
+## Rails 8.0.0.beta1 (September 26, 2024) ##
+
+*   Dispatch direct-upload events on attachment uploads
+
+    When using Action Text's rich textarea,  it's possible to attach files to the
+    editor. Previously, that action didn't dispatch any events, which made it hard
+    to react to the file uploads. For instance, if an upload failed, there was no
+    way to notify the user about it, or remove the attachment from the editor.
+
+    This commits adds new events - `direct-upload:start`, `direct-upload:progress`,
+    and `direct-upload:end` - similar to how Active Storage's direct uploads work.
+
+    *Matheus Richard*, *Brad Rees*
+
+*   Add `store_if_blank` option to `has_rich_text`
+
+    Pass `store_if_blank: false` to not create `ActionText::RichText` records when saving with a blank attribute, such as from an optional form parameter.
 
     ```ruby
-    # <trix-editor id="message_content" ...></trix-editor>
-    fill_in_rich_text_area "message_content", with: "Hello <em>world!</em>"
+    class Message
+      has_rich_text :content, store_if_blank: false
+    end
 
-    # <trix-editor placeholder="Your message here" ...></trix-editor>
-    fill_in_rich_text_area "Your message here", with: "Hello <em>world!</em>"
-
-    # <trix-editor aria-label="Message content" ...></trix-editor>
-    fill_in_rich_text_area "Message content", with: "Hello <em>world!</em>"
-
-    # <input id="trix_input_1" name="message[content]" type="hidden">
-    # <trix-editor input="trix_input_1"></trix-editor>
-    fill_in_rich_text_area "message[content]", with: "Hello <em>world!</em>"
+    Message.create(content: "hi") # creates an ActionText::RichText
+    Message.create(content: "") # does not create an ActionText::RichText
     ```
 
-    *George Claghorn*
+    *Alex Ghiculescu*
 
+*   Strip `content` attribute if the key is present but the value is empty
 
-Please check [6-0-stable](https://github.com/rails/rails/blob/6-0-stable/actiontext/CHANGELOG.md) for previous changes.
+    *Jeremy Green*
+
+*   Rename `rich_text_area` methods into `rich_textarea`
+
+    Old names are still available as aliases.
+
+    *Sean Doyle*
+
+*   Only sanitize `content` attribute when present in attachments.
+
+    *Petrik de Heus*
+
+Please check [7-2-stable](https://github.com/rails/rails/blob/7-2-stable/actiontext/CHANGELOG.md) for previous changes.

@@ -10,7 +10,7 @@ module RailtiesTest
     include Rack::Test::Methods
 
     def setup
-      build_app
+      build_app({ multi_db: true })
 
       @plugin = engine "bukkits" do |plugin|
         plugin.write "lib/bukkits.rb", <<-RUBY
@@ -32,19 +32,18 @@ module RailtiesTest
       require "#{app_path}/config/environment"
     end
 
-    def migrations
-      migration_root = File.expand_path(ActiveRecord::Migrator.migrations_paths.first, app_path)
-      ActiveRecord::MigrationContext.new(migration_root, ActiveRecord::SchemaMigration).migrations
-    end
+    def migrations(database = nil)
+      migration_path = if database
+        config = ActiveRecord::Base.configurations.configs_for(name: database)
+        config.migrations_paths
+      else
+        ActiveRecord::Migrator.migrations_paths.first
+      end
 
-    test "serving sprocket's assets" do
-      @plugin.write "app/assets/javascripts/engine.js.erb", "<%= :alert %>();"
-      add_to_env_config "development", "config.assets.digest = false"
-
-      boot_rails
-
-      get "/assets/engine.js"
-      assert_match "alert()", last_response.body
+      migration_root = File.expand_path(migration_path, app_path)
+      sm = ActiveRecord::SchemaMigration::NullSchemaMigration.new
+      im = ActiveRecord::InternalMetadata::NullInternalMetadata.new
+      ActiveRecord::MigrationContext.new(migration_root, sm, im).migrations
     end
 
     test "rake environment can be called in the engine" do
@@ -52,7 +51,7 @@ module RailtiesTest
 
       @plugin.write "Rakefile", <<-RUBY
         APP_RAKEFILE = '#{app_path}/Rakefile'
-        load 'rails/tasks/engine.rake'
+        load "rails/tasks/engine.rake"
         task :foo => :environment do
           puts "Task ran"
         end
@@ -65,6 +64,8 @@ module RailtiesTest
     end
 
     test "copying migrations" do
+      add_to_config("config.active_record.timestamped_migrations = false")
+
       @plugin.write "db/migrate/1_create_users.rb", <<-RUBY
         class CreateUsers < ActiveRecord::Migration::Current
         end
@@ -115,6 +116,59 @@ module RailtiesTest
       end
     end
 
+    test "copying migrations to specific database" do
+      add_to_config("config.active_record.timestamped_migrations = false")
+
+      @plugin.write "db/migrate/1_create_users.rb", <<-RUBY
+        class CreateUsers < ActiveRecord::Migration::Current
+        end
+      RUBY
+
+      @plugin.write "db/migrate/2_add_last_name_to_users.rb", <<-RUBY
+        class AddLastNameToUsers < ActiveRecord::Migration::Current
+        end
+      RUBY
+
+      @plugin.write "db/migrate/3_create_sessions.rb", <<-RUBY
+        class CreateSessions < ActiveRecord::Migration::Current
+        end
+      RUBY
+
+      app_file "db/animals_migrate/1_create_sessions.rb", <<-RUBY
+        class CreateSessions < ActiveRecord::Migration::Current
+          def up
+          end
+        end
+      RUBY
+
+      restrict_frameworks
+      boot_rails
+
+      Dir.chdir(app_path) do
+        output = `bundle exec rake bukkits:install:migrations DATABASE=animals`
+
+        ["CreateUsers", "AddLastNameToUsers", "CreateSessions"].each do |migration_name|
+          assert migrations("animals").detect { |migration| migration.name == migration_name }
+        end
+        assert_match(/Copied migration \d+_create_users\.bukkits\.rb from bukkits/, output)
+        assert_match(/Copied migration \d+_add_last_name_to_users\.bukkits\.rb from bukkits/, output)
+        assert_match(/NOTE: Migration \d+_create_sessions\.rb from bukkits has been skipped/, output)
+
+        migrations_count = Dir["#{app_path}/db/animals_migrate/*.rb"].length
+
+        assert_equal migrations("animals").length, migrations_count
+
+        output = `bundle exec rake railties:install:migrations DATABASE=animals`.split("\n")
+
+        assert_equal migrations_count, Dir["#{app_path}/db/animals_migrate/*.rb"].length
+
+        assert_no_match(/\d+_create_users/, output.join("\n"))
+
+        bukkits_migration_order = output.index(output.detect { |o| /NOTE: Migration \d+_create_sessions\.rb from bukkits has been skipped/ =~ o })
+        assert_not_nil bukkits_migration_order, "Expected migration to be skipped"
+      end
+    end
+
     test "respects the order of railties when installing migrations" do
       @blog = engine "blog" do |plugin|
         plugin.write "lib/blog.rb", <<-RUBY
@@ -124,6 +178,8 @@ module RailtiesTest
           end
         RUBY
       end
+
+      add_to_config("config.active_record.timestamped_migrations = false")
 
       @plugin.write "db/migrate/1_create_users.rb", <<-RUBY
         class CreateUsers < ActiveRecord::Migration::Current
@@ -147,7 +203,7 @@ module RailtiesTest
       end
     end
 
-    test "dont reverse default railties order" do
+    test "don't reverse default railties order" do
       @api = engine "api" do |plugin|
         plugin.write "lib/api.rb", <<-RUBY
           module Api
@@ -164,6 +220,8 @@ module RailtiesTest
           end
         RUBY
       end
+
+      add_to_config("config.active_record.timestamped_migrations = false")
 
       @core.write "db/migrate/1_create_users.rb", <<-RUBY
         class CreateUsers < ActiveRecord::Migration::Current; end
@@ -200,10 +258,10 @@ module RailtiesTest
 
       @plugin.write "Rakefile", <<-RUBY
         APP_RAKEFILE = '#{app_path}/Rakefile'
-        load 'rails/tasks/engine.rake'
+        load "rails/tasks/engine.rake"
       RUBY
 
-      add_to_config "ActiveRecord::Base.timestamped_migrations = false"
+      add_to_config "ActiveRecord.timestamped_migrations = false"
 
       boot_rails
 
@@ -233,6 +291,26 @@ module RailtiesTest
       assert_equal "Another", Another.name
     end
 
+    test "when the bootstrap hook runs, autoload paths are set" do
+      $test_autoload_once_paths = []
+      $test_autoload_paths = []
+
+      add_to_config <<~RUBY
+        # Unrealistic configuration, but keeps the test simple.
+        config.autoload_once_paths << "#{app_path}/app/helpers"
+
+        initializer "inspect autoload paths", after: :bootstrap_hook do
+          $test_autoload_once_paths += ActiveSupport::Dependencies.autoload_once_paths
+          $test_autoload_paths += ActiveSupport::Dependencies.autoload_paths
+        end
+      RUBY
+
+      boot_rails
+
+      assert_includes $test_autoload_once_paths, "#{app_path}/app/helpers"
+      assert_includes $test_autoload_paths, "#{app_path}/app/controllers"
+    end
+
     test "puts its models directory on autoload path" do
       @plugin.write "app/models/my_bukkit.rb", "class MyBukkit ; end"
       boot_rails
@@ -243,6 +321,34 @@ module RailtiesTest
       @plugin.write "app/controllers/bukkit_controller.rb", "class BukkitController ; end"
       boot_rails
       assert_nothing_raised { BukkitController }
+    end
+
+    test "can draw routes in app routes from engines" do
+      @plugin.write "config/routes/testing.rb", <<~RUBY
+        Rails.application.routes.draw do
+          get "/testing", to: "test#action", as: :testing
+        end
+      RUBY
+
+      @plugin.write "config/routes.rb", <<~RUBY
+        Rails.application.routes.draw do
+          draw(:testing)
+        end
+      RUBY
+
+      @plugin.write "app/controllers/testing_controller.rb", <<-RUBY
+        class TestingController < ActionController::Base
+          def index
+            render plain: "test"
+          end
+        end
+      RUBY
+
+      boot_rails
+
+      get("/testing")
+
+      assert_equal("test", last_response.body)
     end
 
     test "adds its views to view paths" do
@@ -280,6 +386,43 @@ module RailtiesTest
       require "rack/mock"
       response = BukkitController.action(:index).call(Rack::MockRequest.env_for("/"))
       assert_equal "Hi bukkits\n", response[2].body
+    end
+
+    test "adds its fixtures path to fixture_paths" do
+      @plugin.write "test/fixtures/bukkits.yml", ""
+
+      boot_rails
+
+      test_class = Class.new
+      test_class.singleton_class.attr_accessor :fixture_paths
+      test_class.fixture_paths = []
+      ActiveSupport.run_load_hooks(:active_record_fixtures, test_class)
+
+      assert_equal test_class.fixture_paths, ["#{Bukkits::Engine.root}/test/fixtures/"]
+    end
+
+    test "adds its mailer previews to mailer preview paths" do
+      @plugin.write "app/mailers/bukkit_mailer.rb", <<-RUBY
+        class BukkitMailer < ActionMailer::Base
+          def foo
+          end
+        end
+      RUBY
+
+      @plugin.write "test/mailers/previews/bukkit_mailer_preview.rb", <<-RUBY
+        class BukkitMailerPreview < ActionMailer::Preview
+          def foo
+          end
+        end
+      RUBY
+
+      @plugin.write "app/views/bukkit_mailer/foo.html.erb", "Bukkit"
+
+      boot_rails
+
+      get "/rails/mailers"
+      assert_match '<h3><a href="/rails/mailers/bukkit_mailer">Bukkit Mailer</a></h3>', last_response.body
+      assert_match '<li><a href="/rails/mailers/bukkit_mailer/foo">foo</a></li>', last_response.body
     end
 
     test "adds helpers to controller views" do
@@ -390,6 +533,37 @@ module RailtiesTest
       assert $executed
     end
 
+    test "locales can be nested" do
+      app_file "config/locales/en/models.yml", <<~YAML
+        en:
+          foo: "1"
+      YAML
+
+      app_file "config/locales/en/dates.yml", <<~YAML
+        en:
+          bar: "1"
+      YAML
+
+      app_file "config/locales/extra/nested/folder/en.yml", <<~YAML
+        en:
+          baz: "1"
+      YAML
+
+      boot_rails
+
+      expected_locales = %W(
+        #{app_path}/config/locales/en/models.yml
+        #{app_path}/config/locales/en/dates.yml
+        #{app_path}/config/locales/extra/nested/folder/en.yml
+      ).map { |path| File.expand_path(path) }
+
+      actual_locales = I18n.load_path.map { |path| File.expand_path(path) }
+
+      expected_locales.each do |expected_locale|
+        assert_includes(actual_locales, expected_locale)
+      end
+    end
+
     test "i18n files have lower priority than application ones" do
       add_to_config <<-RUBY
         config.i18n.load_path << "#{app_path}/app/locales/en.yml"
@@ -484,6 +658,8 @@ en:
 
       add_to_config "config.middleware.use Bukkits"
       boot_rails
+
+      assert_includes Rails.application.middleware.map(&:klass), Bukkits, "Bukkits middleware should be in the middleware stack"
     end
 
     test "initializers are executed after application configuration initializers" do
@@ -520,7 +696,7 @@ en:
     end
 
     test "engine is a rack app and can have its own middleware stack" do
-      add_to_config("config.action_dispatch.show_exceptions = false")
+      add_to_config("config.action_dispatch.show_exceptions = :none")
 
       @plugin.write "lib/bukkits.rb", <<-RUBY
         module Bukkits
@@ -632,7 +808,6 @@ en:
         end
       RUBY
 
-      require "rack/file"
       boot_rails
 
       env = Rack::MockRequest.env_for("/")
@@ -644,7 +819,7 @@ en:
       assert_equal Rails.application.routes, env["action_dispatch.routes"]
     end
 
-    test "isolated engine should include only its own routes and helpers" do
+    test "isolated engine routes and helpers are isolated to that engine" do
       @plugin.write "lib/bukkits.rb", <<-RUBY
         module Bukkits
           class Engine < ::Rails::Engine
@@ -729,6 +904,30 @@ en:
         end
       RUBY
 
+      @plugin.write "app/controllers/bukkits/session_controller.rb", <<-RUBY
+        module Bukkits
+          class SessionController < ApplicationController
+            def index
+              render plain: default_path
+            end
+
+            private
+              def default_path
+                foo_path
+              end
+          end
+        end
+      RUBY
+
+      controller "bar", <<-RUBY
+        class BarController < Bukkits::SessionController
+          private
+            def default_path
+              bar_path
+            end
+        end
+      RUBY
+
       @plugin.write "app/mailers/bukkits/my_mailer.rb", <<-RUBY
         module Bukkits
           class MyMailer < ActionMailer::Base
@@ -736,15 +935,18 @@ en:
         end
       RUBY
 
-      add_to_config("config.action_dispatch.show_exceptions = false")
+      add_to_config("config.action_dispatch.show_exceptions = :none")
 
       boot_rails
 
       assert_equal "bukkits_", Bukkits.table_name_prefix
       assert_equal "bukkits", Bukkits::Engine.engine_name
       assert_equal Bukkits.railtie_namespace, Bukkits::Engine
-      assert ::Bukkits::MyMailer.method_defined?(:foo_url)
-      assert_not ::Bukkits::MyMailer.method_defined?(:bar_url)
+      assert ::Bukkits::MyMailer.new.respond_to?(:foo_url)
+      assert_not ::Bukkits::MyMailer.new.respond_to?(:bar_url)
+
+      get("/bar")
+      assert_equal "/bar", last_response.body
 
       get("/bukkits/from_app")
       assert_equal "false", last_response.body
@@ -813,7 +1015,7 @@ en:
           <% end %>
       ERB
 
-      add_to_config("config.action_dispatch.show_exceptions = false")
+      add_to_config("config.action_dispatch.show_exceptions = :none")
 
       boot_rails
 
@@ -852,11 +1054,78 @@ en:
         end
       RUBY
 
-      add_to_config("config.action_dispatch.show_exceptions = false")
+      add_to_config("config.action_dispatch.show_exceptions = :none")
 
       boot_rails
 
       get("/bukkits/foo")
+      assert_equal "ok", last_response.body
+    end
+
+    test "nested isolated engines should set correct route module prefix" do
+      app = File.readlines("#{app_path}/config/application.rb")
+      app.insert(6, "require \"bukkits/awesome\"")
+      File.open("#{app_path}/config/application.rb", "r+") do |f|
+        f.puts app
+      end
+
+      @plugin.write "lib/bukkits.rb", <<-RUBY
+        module Bukkits
+          class Engine < ::Rails::Engine
+            isolate_namespace Bukkits
+          end
+        end
+      RUBY
+
+      @plugin.write "lib/bukkits/awesome.rb", <<-RUBY
+        module Bukkits
+          module Awesome
+            class Engine < ::Rails::Engine
+              isolate_namespace Bukkits::Awesome
+            end
+          end
+        end
+      RUBY
+
+      app_file "config/routes.rb", <<-RUBY
+        Rails.application.routes.draw do
+          mount Bukkits::Engine, at: "/bukkits"
+        end
+
+        Bukkits::Engine.routes.draw do
+          get "/foo" => "foo#index"
+
+          mount Bukkits::Awesome::Engine, at: "/awesome"
+        end
+
+        Bukkits::Awesome::Engine.routes.draw do
+          get "/bar", as: :bar, to: "bar#index"
+        end
+      RUBY
+
+      @plugin.write "app/controllers/bukkits/foo_controller.rb", <<-RUBY
+        class Bukkits::FooController < ActionController::Base
+          def index
+            render plain: bukkits_awesome.bar_path
+          end
+        end
+      RUBY
+
+      @plugin.write "app/controllers/bukkits/awesome/bar_controller.rb", <<-RUBY
+        class Bukkits::Awesome::BarController < ActionController::Base
+          def index
+            render plain: "ok"
+          end
+        end
+      RUBY
+
+      add_to_config("config.action_dispatch.show_exceptions = :none")
+
+      boot_rails
+
+      get("/bukkits/foo")
+      assert_equal "/bukkits/awesome/bar", last_response.body
+      get("/bukkits/awesome/bar")
       assert_equal "ok", last_response.body
     end
 
@@ -879,29 +1148,40 @@ en:
       assert Bukkits::Engine.config.bukkits_seeds_loaded
     end
 
-    test "jobs are ran inline while loading seeds with async adapter configured" do
+    test "loading seed data is wrapped by the executor" do
       app_file "db/seeds.rb", <<-RUBY
-        Rails.application.config.seed_queue_adapter = ActiveJob::Base.queue_adapter
+        Rails.application.config.seeding_wrapped_by_executor = Rails.application.executor.active?
       RUBY
 
       boot_rails
       Rails.application.load_seed
 
-      assert_instance_of ActiveJob::QueueAdapters::InlineAdapter, Rails.application.config.seed_queue_adapter
-      assert_instance_of ActiveJob::QueueAdapters::AsyncAdapter, ActiveJob::Base.queue_adapter
+      assert_predicate Rails.application.config, :seeding_wrapped_by_executor
     end
 
-    test "jobs are ran with original adapter while loading seeds with custom adapter configured" do
+    test "inline jobs do not clear CurrentAttributes when loading seed data" do
       app_file "db/seeds.rb", <<-RUBY
-        Rails.application.config.seed_queue_adapter = ActiveJob::Base.queue_adapter
+        class SeedsAttributes < ActiveSupport::CurrentAttributes
+          attribute :foo
+        end
+
+        class SeedsJob < ActiveJob::Base
+          self.queue_adapter = :inline
+          def perform
+            Rails.application.config.seeds_job_ran = true
+          end
+        end
+
+        SeedsAttributes.foo = 42
+        SeedsJob.perform_later
+        Rails.application.config.seeds_attributes_foo = SeedsAttributes.foo
       RUBY
 
       boot_rails
-      Rails.application.config.active_job.queue_adapter = :delayed_job
       Rails.application.load_seed
 
-      assert_instance_of ActiveJob::QueueAdapters::DelayedJobAdapter, Rails.application.config.seed_queue_adapter
-      assert_instance_of ActiveJob::QueueAdapters::DelayedJobAdapter, ActiveJob::Base.queue_adapter
+      assert Rails.application.config.seeds_job_ran
+      assert_equal 42, Rails.application.config.seeds_attributes_foo
     end
 
     test "seed data can be loaded when ActiveJob is not present" do
@@ -1077,6 +1357,32 @@ en:
       assert_equal "foo", Bukkits.table_name_prefix
     end
 
+    test "take ActiveRecord table_name_prefix into consideration when defining table_name_prefix" do
+      @plugin.write "lib/bukkits.rb", <<-RUBY
+        module Bukkits
+          class Engine < ::Rails::Engine
+            isolate_namespace(Bukkits)
+          end
+        end
+      RUBY
+
+      @plugin.write "app/models/bukkits/post.rb", <<-RUBY
+        module Bukkits
+          class Post < ActiveRecord::Base
+          end
+        end
+      RUBY
+
+      add_to_config <<-RUBY
+        config.active_record.table_name_prefix = "ar_prefix_"
+      RUBY
+
+      boot_rails
+
+      assert_equal "ar_prefix_bukkits_posts", Bukkits::Post.table_name
+      assert_equal "ar_prefix_bukkits_", Bukkits.table_name_prefix
+    end
+
     test "fetching engine by path" do
       @plugin.write "lib/bukkits.rb", <<-RUBY
         module Bukkits
@@ -1130,7 +1436,7 @@ en:
         end
       RUBY
 
-      add_to_config("config.action_dispatch.show_exceptions = false")
+      add_to_config("config.action_dispatch.show_exceptions = :none")
 
       boot_rails
 
@@ -1158,11 +1464,11 @@ en:
       controller "main", <<-RUBY
         class MainController < ActionController::Base
           def foo
-            render inline: '<%= render :partial => "shared/foo" %>'
+            render inline: '<%= render partial: "application/foo" %>'
           end
 
           def bar
-            render inline: '<%= render :partial => "shared/bar" %>'
+            render inline: '<%= render partial: "application/bar" %>'
           end
         end
       RUBY
@@ -1174,19 +1480,19 @@ en:
         end
       RUBY
 
-      @plugin.write "app/views/shared/_foo.html.erb", <<-RUBY
+      @plugin.write "app/views/application/_foo.html.erb", <<-RUBY
         Bukkit's foo partial
       RUBY
 
-      app_file "app/views/shared/_foo.html.erb", <<-RUBY
+      app_file "app/views/application/_foo.html.erb", <<-RUBY
         App's foo partial
       RUBY
 
-      @blog.write "app/views/shared/_bar.html.erb", <<-RUBY
+      @blog.write "app/views/application/_bar.html.erb", <<-RUBY
         Blog's bar partial
       RUBY
 
-      app_file "app/views/shared/_bar.html.erb", <<-RUBY
+      app_file "app/views/application/_bar.html.erb", <<-RUBY
         App's bar partial
       RUBY
 
@@ -1218,14 +1524,33 @@ en:
       assert_equal "App's bar partial", last_response.body.strip
 
       get("/assets/foo.js")
-      assert_match "// Bukkit's foo js", last_response.body.strip
+      assert_predicate last_response, :not_found?
 
       get("/assets/bar.js")
-      assert_match "// App's bar js", last_response.body.strip
+      assert_predicate last_response, :not_found?
 
-      # ensure that railties are not added twice
-      railties = Rails.application.send(:ordered_railties).map(&:class)
-      assert_equal railties, railties.uniq
+      assert_equal <<~EXPECTED, Rails.application.send(:ordered_railties).flatten.map(&:class).map(&:name).join("\n") << "\n"
+        I18n::Railtie
+        ActiveSupport::Railtie
+        ActionDispatch::Railtie
+        ActiveModel::Railtie
+        ActionController::Railtie
+        ActiveRecord::Railtie
+        GlobalID::Railtie
+        ActiveJob::Railtie
+        ActionMailer::Railtie
+        Rails::TestUnitRailtie
+        Propshaft::Railtie
+        ActionView::Railtie
+        ActiveStorage::Engine
+        ActionCable::Engine
+        ActionMailbox::Engine
+        ActionText::Engine
+        Bukkits::Engine
+        Importmap::Engine
+        AppTemplate::Application
+        Blog::Engine
+      EXPECTED
     end
 
     test "railties_order adds :all with lowest priority if not given" do
@@ -1239,7 +1564,7 @@ en:
       controller "main", <<-RUBY
         class MainController < ActionController::Base
           def foo
-            render inline: '<%= render :partial => "shared/foo" %>'
+            render inline: '<%= render partial: "application/foo" %>'
           end
         end
       RUBY
@@ -1250,11 +1575,11 @@ en:
         end
       RUBY
 
-      @plugin.write "app/views/shared/_foo.html.erb", <<-RUBY
+      @plugin.write "app/views/application/_foo.html.erb", <<-RUBY
         Bukkit's foo partial
       RUBY
 
-      app_file "app/views/shared/_foo.html.erb", <<-RUBY
+      app_file "app/views/application/_foo.html.erb", <<-RUBY
         App's foo partial
       RUBY
 
@@ -1267,7 +1592,7 @@ en:
     end
 
     test "engine can be properly mounted at root" do
-      add_to_config("config.action_dispatch.show_exceptions = false")
+      add_to_config("config.action_dispatch.show_exceptions = :none")
       add_to_config("config.public_file_server.enabled = false")
 
       @plugin.write "lib/bukkits.rb", <<-RUBY
@@ -1379,7 +1704,11 @@ en:
       app_file "app/controllers/bar_controller.rb", <<-RUBY
         class BarController < ApplicationController
           def index
-            render plain: bukkits.bukkit_path
+            text = <<~TEXT
+              bukkits.bukkit_path: \#{bukkits.bukkit_path}
+              Bukkits::Engine.routes.url_helpers.bukkit_path: \#{Bukkits::Engine.routes.url_helpers.bukkit_path}
+            TEXT
+            render plain: text
           end
         end
       RUBY
@@ -1400,18 +1729,32 @@ en:
       @plugin.write "app/controllers/bukkits/bukkit_controller.rb", <<-RUBY
         class Bukkits::BukkitController < ActionController::Base
           def index
-            render plain: main_app.bar_path
+            text = <<~TEXT
+              main_app.bar_path: \#{main_app.bar_path}
+              Rails.application.routes.url_helpers.bar_path: \#{Rails.application.routes.url_helpers.bar_path}
+            TEXT
+            render plain: text
           end
         end
       RUBY
 
       boot_rails
 
+      expected = <<~TEXT
+        main_app.bar_path: /foo/bar
+        Rails.application.routes.url_helpers.bar_path: /foo/bar
+      TEXT
       get("/bukkits/bukkit", {}, { "SCRIPT_NAME" => "/foo" })
-      assert_equal "/foo/bar", last_response.body
+      assert_equal expected,
+                   last_response.body
 
+      expected = <<~TEXT
+        bukkits.bukkit_path: /foo/bukkits/bukkit
+        Bukkits::Engine.routes.url_helpers.bukkit_path: /foo/bukkits/bukkit
+      TEXT
       get("/bar", {}, { "SCRIPT_NAME" => "/foo" })
-      assert_equal "/foo/bukkits/bukkit", last_response.body
+      assert_equal expected,
+                   last_response.body
     end
 
     test "isolated engine can be mounted under multiple static locations" do
@@ -1532,15 +1875,28 @@ en:
     test "active_storage:install task works within engine" do
       @plugin.write "Rakefile", <<-RUBY
         APP_RAKEFILE = '#{app_path}/Rakefile'
-        load 'rails/tasks/engine.rake'
+        load "rails/tasks/engine.rake"
       RUBY
 
       Dir.chdir(@plugin.path) do
-        output = `bundle exec rake app:active_storage:install`
-        assert $?.success?, output
+        assert_command_succeeds("bundle exec rake app:active_storage:install")
 
         active_storage_migration = migrations.detect { |migration| migration.name == "CreateActiveStorageTables" }
         assert active_storage_migration
+      end
+    end
+
+    test "active_storage:update task works within engine" do
+      @plugin.write "Rakefile", <<-RUBY
+        APP_RAKEFILE = '#{app_path}/Rakefile'
+        load "rails/tasks/engine.rake"
+      RUBY
+
+      Dir.chdir(@plugin.path) do
+        assert_command_succeeds("bundle exec rake app:active_storage:update")
+
+        assert migrations.detect { |migration| migration.name == "AddServiceNameToActiveStorageBlobs" }
+        assert migrations.detect { |migration| migration.name == "CreateActiveStorageVariantRecords" }
       end
     end
 
@@ -1555,8 +1911,8 @@ en:
 
     # Restrict frameworks to load in order to avoid engine frameworks affect tests.
     def restrict_frameworks
-      remove_from_config("require 'rails/all'")
-      remove_from_config("require_relative 'boot'")
+      remove_from_config('require "rails/all"')
+      remove_from_config('require_relative "boot"')
       remove_from_env_config("development", "config.active_storage.*")
       frameworks = <<~RUBY
         require "rails"
@@ -1566,11 +1922,15 @@ en:
         require "action_controller/railtie"
         require "action_mailer/railtie"
         require "action_view/railtie"
-        require "sprockets/railtie"
         require "rails/test_unit/railtie"
       RUBY
       environment = File.read("#{app_path}/config/application.rb")
       File.open("#{app_path}/config/application.rb", "w") { |f| f.puts frameworks + "\n" + environment }
+    end
+
+    def assert_command_succeeds(command)
+      output = `#{command}`
+      assert_predicate $?, :success?, "Command did not succeed: #{command}\n#{output}"
     end
   end
 end

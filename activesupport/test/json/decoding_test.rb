@@ -40,6 +40,8 @@ class TestJSONDecoding < ActiveSupport::TestCase
     # needs to be *exact*
     %({"a": " 2007-01-01 01:12:34 Z "})          => { "a" => " 2007-01-01 01:12:34 Z " },
     %({"a": "2007-01-01 : it's your birthday"})  => { "a" => "2007-01-01 : it's your birthday" },
+    %({"a": "Today is:\\n2020-05-21"})           => { "a" => "Today is:\n2020-05-21" },
+    %({"a": "2007-01-01 01:12:34 Z\\nwas my birthday"}) => { "a" => "2007-01-01 01:12:34 Z\nwas my birthday" },
     %([])    => [],
     %({})    => {},
     %({"a":1}) => { "a" => 1 },
@@ -64,9 +66,9 @@ class TestJSONDecoding < ActiveSupport::TestCase
     %q({"a":"\n"}) => { "a" => "\n" },
     %q({"a":"\u000a"}) => { "a" => "\n" },
     %q({"a":"Line1\u000aLine2"}) => { "a" => "Line1\nLine2" },
-    # prevent json unmarshalling
+    # prevent JSON unmarshalling
     '{"json_class":"TestJSONDecoding::Foo"}' => { "json_class" => "TestJSONDecoding::Foo" },
-    # json "fragments" - these are invalid JSON, but ActionPack relies on this
+    # JSON "fragments" - these are invalid JSON, but ActionPack relies on this
     '"a string"' => "a string",
     "1.1" => 1.1,
     "1" => 1,
@@ -79,7 +81,7 @@ class TestJSONDecoding < ActiveSupport::TestCase
   TESTS.each_with_index do |(json, expected), index|
     fail_message = "JSON decoding failed for #{json}"
 
-    test "json decodes #{index}" do
+    test "JSON decodes #{index}" do
       with_tz_default "Eastern Time (US & Canada)" do
         with_parse_json_times(true) do
           silence_warnings do
@@ -94,7 +96,7 @@ class TestJSONDecoding < ActiveSupport::TestCase
     end
   end
 
-  test "json decodes time json with time parsing disabled" do
+  test "JSON decodes time JSON with time parsing disabled" do
     with_parse_json_times(false) do
       expected = { "a" => "2007-01-01 01:12:34 Z" }
       assert_equal expected, ActiveSupport::JSON.decode(%({"a": "2007-01-01 01:12:34 Z"}))

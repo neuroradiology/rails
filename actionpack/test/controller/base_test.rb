@@ -14,9 +14,16 @@ class EmptyController < ActionController::Base
 end
 
 class SimpleController < ActionController::Base
+  def status
+    head :ok
+  end
+
   def hello
     self.response_body = "hello"
   end
+end
+
+class ChildController < SimpleController
 end
 
 class NonEmptyController < ActionController::Base
@@ -83,14 +90,14 @@ class ControllerClassTests < ActiveSupport::TestCase
     record.save
 
     dom_id = nil
-    assert_not_deprecated do
+    assert_not_deprecated(ActionController.deprecator) do
       dom_id = RecordIdentifierIncludedController.new.dom_id(record)
     end
 
     assert_equal "comment_1", dom_id
 
     dom_class = nil
-    assert_not_deprecated do
+    assert_not_deprecated(ActionController.deprecator) do
       dom_class = RecordIdentifierIncludedController.new.dom_class(record)
     end
     assert_equal "comment", dom_class
@@ -112,10 +119,16 @@ class ControllerInstanceTests < ActiveSupport::TestCase
     assert_predicate @empty, :performed?
   end
 
-  def test_action_methods
+  def test_empty_controller_action_methods
     @empty_controllers.each do |c|
       assert_equal Set.new, c.class.action_methods, "#{c.controller_path} should be empty!"
     end
+  end
+
+  def test_action_methods_with_inherited_shadowed_internal_method
+    assert_includes ActionController::Base.instance_methods, :status
+    assert_equal Set.new(["status", "hello"]), SimpleController.action_methods
+    assert_equal Set.new(["status", "hello"]), ChildController.action_methods
   end
 
   def test_temporary_anonymous_controllers
@@ -133,7 +146,7 @@ class ControllerInstanceTests < ActiveSupport::TestCase
     ActionDispatch::Response.default_headers = {
       "X-Frame-Options" => "DENY",
       "X-Content-Type-Options" => "nosniff",
-      "X-XSS-Protection" => "1;"
+      "X-XSS-Protection" => "0"
     }
 
     response_headers = SimpleController.action("hello").call(
@@ -146,6 +159,10 @@ class ControllerInstanceTests < ActiveSupport::TestCase
     assert response_headers.key?("X-XSS-Protection")
   ensure
     ActionDispatch::Response.default_headers = original_default_headers
+  end
+
+  def test_inspect
+    assert_match(/\A#<EmptyController:0x[0-9a-f]+>\z/, @empty.inspect)
   end
 end
 
@@ -166,6 +183,18 @@ class PerformActionTest < ActionController::TestCase
       get :non_existent
     end
     assert_equal "The action 'non_existent' could not be found for EmptyController", exception.message
+  end
+
+  def test_exceptions_have_suggestions_for_fix
+    use_controller SimpleController
+    exception = assert_raise AbstractController::ActionNotFound do
+      get :ello
+    end
+    if exception.respond_to?(:detailed_message)
+      assert_match "Did you mean?", exception.detailed_message
+    else
+      assert_match "Did you mean?", exception.message
+    end
   end
 
   def test_action_missing_should_work
@@ -204,7 +233,7 @@ class UrlOptionsTest < ActionController::TestCase
       set.draw do
         get "from_view", to: "url_options#from_view", as: :from_view
 
-        ActiveSupport::Deprecation.silence do
+        ActionDispatch.deprecator.silence do
           get ":controller/:action"
         end
       end
@@ -212,7 +241,7 @@ class UrlOptionsTest < ActionController::TestCase
       get :from_view, params: { route: "from_view_url" }
 
       assert_equal "http://www.override.com/from_view", @response.body
-      assert_equal "http://www.override.com/from_view", @controller.send(:from_view_url)
+      assert_equal "http://www.override.com/from_view", @controller.from_view_url
       assert_equal "http://www.override.com/default_url_options/index", @controller.url_for(controller: "default_url_options")
     end
   end
@@ -241,7 +270,7 @@ class DefaultUrlOptionsTest < ActionController::TestCase
       set.draw do
         get "from_view", to: "default_url_options#from_view", as: :from_view
 
-        ActiveSupport::Deprecation.silence do
+        ActionDispatch.deprecator.silence do
           get ":controller/:action"
         end
       end
@@ -249,7 +278,7 @@ class DefaultUrlOptionsTest < ActionController::TestCase
       get :from_view, params: { route: "from_view_url" }
 
       assert_equal "http://www.override.com/from_view?locale=en", @response.body
-      assert_equal "http://www.override.com/from_view?locale=en", @controller.send(:from_view_url)
+      assert_equal "http://www.override.com/from_view?locale=en", @controller.from_view_url
       assert_equal "http://www.override.com/default_url_options/new?locale=en", @controller.url_for(controller: "default_url_options")
     end
   end
@@ -261,7 +290,7 @@ class DefaultUrlOptionsTest < ActionController::TestCase
           resources :descriptions
         end
 
-        ActiveSupport::Deprecation.silence do
+        ActionDispatch.deprecator.silence do
           get ":controller/:action"
         end
       end
@@ -269,16 +298,16 @@ class DefaultUrlOptionsTest < ActionController::TestCase
       get :from_view, params: { route: "description_path(1)" }
 
       assert_equal "/en/descriptions/1", @response.body
-      assert_equal "/en/descriptions", @controller.send(:descriptions_path)
-      assert_equal "/pl/descriptions", @controller.send(:descriptions_path, "pl")
-      assert_equal "/pl/descriptions", @controller.send(:descriptions_path, locale: "pl")
-      assert_equal "/pl/descriptions.xml", @controller.send(:descriptions_path, "pl", "xml")
-      assert_equal "/en/descriptions.xml", @controller.send(:descriptions_path, format: "xml")
-      assert_equal "/en/descriptions/1", @controller.send(:description_path, 1)
-      assert_equal "/pl/descriptions/1", @controller.send(:description_path, "pl", 1)
-      assert_equal "/pl/descriptions/1", @controller.send(:description_path, 1, locale: "pl")
-      assert_equal "/pl/descriptions/1.xml", @controller.send(:description_path, "pl", 1, "xml")
-      assert_equal "/en/descriptions/1.xml", @controller.send(:description_path, 1, format: "xml")
+      assert_equal "/en/descriptions", @controller.descriptions_path
+      assert_equal "/pl/descriptions", @controller.descriptions_path("pl")
+      assert_equal "/pl/descriptions", @controller.descriptions_path(locale: "pl")
+      assert_equal "/pl/descriptions.xml", @controller.descriptions_path("pl", "xml")
+      assert_equal "/en/descriptions.xml", @controller.descriptions_path(format: "xml")
+      assert_equal "/en/descriptions/1", @controller.description_path(1)
+      assert_equal "/pl/descriptions/1", @controller.description_path("pl", 1)
+      assert_equal "/pl/descriptions/1", @controller.description_path(1, locale: "pl")
+      assert_equal "/pl/descriptions/1.xml", @controller.description_path("pl", 1, "xml")
+      assert_equal "/en/descriptions/1.xml", @controller.description_path(1, format: "xml")
     end
   end
 end
@@ -317,7 +346,19 @@ class EmptyUrlOptionsTest < ActionController::TestCase
         resources :things
       end
 
-      assert_equal "/things", @controller.send(:things_path)
+      assert_equal "/things", @controller.things_path
     end
+  end
+end
+
+class BaseTest < ActiveSupport::TestCase
+  def test_included_modules_are_tracked
+    base_content = File.read("#{__dir__}/../../lib/action_controller/base.rb")
+    included_modules = base_content.scan(/(?<=include )[A-Z].*/)
+
+    assert_equal(
+      ActionController::Base::MODULES.map { |m| m.to_s.delete_prefix("ActionController::") },
+      included_modules
+    )
   end
 end

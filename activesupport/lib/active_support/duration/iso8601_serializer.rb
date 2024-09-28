@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "active_support/core_ext/object/blank"
-
 module ActiveSupport
   class Duration
     # Serializes duration to string according to ISO 8601 Duration format.
@@ -15,7 +13,7 @@ module ActiveSupport
 
       # Builds and returns output string.
       def serialize
-        parts, sign = normalize
+        parts = normalize
         return "PT0S" if parts.empty?
 
         output = +"P"
@@ -27,17 +25,16 @@ module ActiveSupport
         time << "#{parts[:hours]}H"     if parts.key?(:hours)
         time << "#{parts[:minutes]}M"   if parts.key?(:minutes)
         if parts.key?(:seconds)
-          time << "#{sprintf(@precision ? "%0.0#{@precision}f" : '%g', parts[:seconds])}S"
+          time << "#{format_seconds(parts[:seconds])}S"
         end
         output << "T#{time}" unless time.empty?
-        "#{sign}#{output}"
+        output
       end
 
       private
         # Return pair of duration's parts and whole duration sign.
         # Parts are summarized (as they can become repetitive due to addition, etc).
         # Zero parts are removed as not significant.
-        # If all parts are negative it will negate all of them and return minus as a sign.
         def normalize
           parts = @duration.parts.each_with_object(Hash.new(0)) do |(k, v), p|
             p[k] += v  unless v.zero?
@@ -48,17 +45,19 @@ module ActiveSupport
             parts[:days] += parts.delete(:weeks) * SECONDS_PER_WEEK / SECONDS_PER_DAY
           end
 
-          # If all parts are negative - let's make a negative duration
-          sign = ""
-          if parts.values.all? { |v| v < 0 }
-            sign = "-"
-            parts.transform_values!(&:-@)
-          end
-          [parts, sign]
+          parts
         end
 
         def week_mixed_with_date?(parts)
-          parts.key?(:weeks) && (parts.keys & DATE_COMPONENTS).any?
+          parts.key?(:weeks) && parts.keys.intersect?(DATE_COMPONENTS)
+        end
+
+        def format_seconds(seconds)
+          if @precision
+            sprintf("%0.0#{@precision}f", seconds)
+          else
+            seconds.to_s
+          end
         end
     end
   end

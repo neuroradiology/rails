@@ -3,11 +3,13 @@
 require "delegate"
 
 module ActionMailer
-  # The <tt>ActionMailer::MessageDelivery</tt> class is used by
+  # = Action Mailer \MessageDelivery
+  #
+  # The +ActionMailer::MessageDelivery+ class is used by
   # ActionMailer::Base when creating a new mailer.
   # <tt>MessageDelivery</tt> is a wrapper (+Delegator+ subclass) around a lazy
-  # created <tt>Mail::Message</tt>. You can get direct access to the
-  # <tt>Mail::Message</tt>, deliver the email or schedule the email to be sent
+  # created +Mail::Message+. You can get direct access to the
+  # +Mail::Message+, deliver the email or schedule the email to be sent
   # through Active Job.
   #
   #   Notifier.welcome(User.first)               # an ActionMailer::MessageDelivery object
@@ -15,7 +17,7 @@ module ActionMailer
   #   Notifier.welcome(User.first).deliver_later # enqueue email delivery as a job through Active Job
   #   Notifier.welcome(User.first).message       # a Mail::Message object
   class MessageDelivery < Delegator
-    def initialize(mailer_class, action, *args) #:nodoc:
+    def initialize(mailer_class, action, *args) # :nodoc:
       @mailer_class, @action, @args = mailer_class, action, args
 
       # The mail is only processed if we try to call any methods on it.
@@ -23,15 +25,15 @@ module ActionMailer
       @processed_mailer = nil
       @mail_message = nil
     end
-    ruby2_keywords(:initialize) if respond_to?(:ruby2_keywords, true)
+    ruby2_keywords(:initialize)
 
     # Method calls are delegated to the Mail::Message that's ready to deliver.
-    def __getobj__ #:nodoc:
+    def __getobj__ # :nodoc:
       @mail_message ||= processed_mailer.message
     end
 
     # Unused except for delegator internals (dup, marshalling).
-    def __setobj__(mail_message) #:nodoc:
+    def __setobj__(mail_message) # :nodoc:
       @mail_message = mail_message
     end
 
@@ -53,16 +55,19 @@ module ActionMailer
     #   Notifier.welcome(User.first).deliver_later!
     #   Notifier.welcome(User.first).deliver_later!(wait: 1.hour)
     #   Notifier.welcome(User.first).deliver_later!(wait_until: 10.hours.from_now)
+    #   Notifier.welcome(User.first).deliver_later!(priority: 10)
     #
     # Options:
     #
     # * <tt>:wait</tt> - Enqueue the email to be delivered with a delay
     # * <tt>:wait_until</tt> - Enqueue the email to be delivered at (after) a specific date / time
     # * <tt>:queue</tt> - Enqueue the email on the specified queue
+    # * <tt>:priority</tt> - Enqueues the email with the specified priority
     #
-    # By default, the email will be enqueued using <tt>ActionMailer::DeliveryJob</tt>. Each
-    # <tt>ActionMailer::Base</tt> class can specify the job to use by setting the class variable
-    # +delivery_job+.
+    # By default, the email will be enqueued using ActionMailer::MailDeliveryJob on
+    # the default queue. Mailer classes can customize the queue name used for the default
+    # job by assigning a +deliver_later_queue_name+ class variable, or provide a custom job
+    # by assigning a +delivery_job+. When a custom job is used, it controls the queue name.
     #
     #   class AccountRegistrationMailer < ApplicationMailer
     #     self.delivery_job = RegistrationDeliveryJob
@@ -77,16 +82,19 @@ module ActionMailer
     #   Notifier.welcome(User.first).deliver_later
     #   Notifier.welcome(User.first).deliver_later(wait: 1.hour)
     #   Notifier.welcome(User.first).deliver_later(wait_until: 10.hours.from_now)
+    #   Notifier.welcome(User.first).deliver_later(priority: 10)
     #
     # Options:
     #
     # * <tt>:wait</tt> - Enqueue the email to be delivered with a delay.
     # * <tt>:wait_until</tt> - Enqueue the email to be delivered at (after) a specific date / time.
     # * <tt>:queue</tt> - Enqueue the email on the specified queue.
+    # * <tt>:priority</tt> - Enqueues the email with the specified priority
     #
-    # By default, the email will be enqueued using <tt>ActionMailer::DeliveryJob</tt>. Each
-    # <tt>ActionMailer::Base</tt> class can specify the job to use by setting the class variable
-    # +delivery_job+.
+    # By default, the email will be enqueued using ActionMailer::MailDeliveryJob on
+    # the default queue. Mailer classes can customize the queue name used for the default
+    # job by assigning a +deliver_later_queue_name+ class variable, or provide a custom job
+    # by assigning a +delivery_job+. When a custom job is used, it controls the queue name.
     #
     #   class AccountRegistrationMailer < ApplicationMailer
     #     self.delivery_job = RegistrationDeliveryJob
@@ -102,7 +110,9 @@ module ActionMailer
     #
     def deliver_now!
       processed_mailer.handle_exceptions do
-        message.deliver!
+        processed_mailer.run_callbacks(:deliver) do
+          message.deliver!
+        end
       end
     end
 
@@ -112,13 +122,15 @@ module ActionMailer
     #
     def deliver_now
       processed_mailer.handle_exceptions do
-        message.deliver
+        processed_mailer.run_callbacks(:deliver) do
+          message.deliver
+        end
       end
     end
 
     private
       # Returns the processed Mailer instance. We keep this instance
-      # on hand so we can delegate exception handling to it.
+      # on hand so we can run callbacks and delegate exception handling to it.
       def processed_mailer
         @processed_mailer ||= @mailer_class.new.tap do |mailer|
           mailer.process @action, *@args
@@ -136,15 +148,8 @@ module ActionMailer
             "#deliver_later, 2. only touch the message *within your mailer " \
             "method*, or 3. use a custom Active Job instead of #deliver_later."
         else
-          job = @mailer_class.delivery_job
-
-          if job <= MailDeliveryJob
-            job.set(options).perform_later(
-              @mailer_class.name, @action.to_s, delivery_method.to_s, args: @args)
-          else
-            job.set(options).perform_later(
-              @mailer_class.name, @action.to_s, delivery_method.to_s, *@args)
-          end
+          @mailer_class.delivery_job.set(options).perform_later(
+            @mailer_class.name, @action.to_s, delivery_method.to_s, args: @args)
         end
       end
   end

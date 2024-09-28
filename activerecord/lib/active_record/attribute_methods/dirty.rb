@@ -4,6 +4,38 @@ require "active_support/core_ext/module/attribute_accessors"
 
 module ActiveRecord
   module AttributeMethods
+    # = Active Record Attribute Methods \Dirty
+    #
+    # Provides a way to track changes in your Active Record models. It adds all
+    # methods from ActiveModel::Dirty and adds database-specific methods.
+    #
+    # A newly created +Person+ object is unchanged:
+    #
+    #   class Person < ActiveRecord::Base
+    #   end
+    #
+    #   person = Person.create(name: "Allison")
+    #   person.changed? # => false
+    #
+    # Change the name:
+    #
+    #   person.name = 'Alice'
+    #   person.name_in_database          # => "Allison"
+    #   person.will_save_change_to_name? # => true
+    #   person.name_change_to_be_saved   # => ["Allison", "Alice"]
+    #   person.changes_to_save           # => {"name"=>["Allison", "Alice"]}
+    #
+    # Save the changes:
+    #
+    #   person.save
+    #   person.name_in_database        # => "Alice"
+    #   person.saved_change_to_name?   # => true
+    #   person.saved_change_to_name    # => ["Allison", "Alice"]
+    #   person.name_before_last_save   # => "Allison"
+    #
+    # Similar to ActiveModel::Dirty, methods can be invoked as
+    # +saved_change_to_name?+ or by passing an argument to the generic method
+    # <tt>saved_change_to_attribute?("name")</tt>.
     module Dirty
       extend ActiveSupport::Concern
 
@@ -14,16 +46,17 @@ module ActiveRecord
           raise "You cannot include Dirty after Timestamp"
         end
 
-        class_attribute :partial_writes, instance_writer: false, default: true
+        class_attribute :partial_updates, instance_writer: false, default: true
+        class_attribute :partial_inserts, instance_writer: false, default: true
 
         # Attribute methods for "changed in last call to save?"
-        attribute_method_affix(prefix: "saved_change_to_", suffix: "?")
-        attribute_method_prefix("saved_change_to_")
-        attribute_method_suffix("_before_last_save")
+        attribute_method_affix(prefix: "saved_change_to_", suffix: "?", parameters: "**options")
+        attribute_method_prefix("saved_change_to_", parameters: false)
+        attribute_method_suffix("_before_last_save", parameters: false)
 
         # Attribute methods for "will change if I call save?"
-        attribute_method_affix(prefix: "will_save_change_to_", suffix: "?")
-        attribute_method_suffix("_change_to_be_saved", "_in_database")
+        attribute_method_affix(prefix: "will_save_change_to_", suffix: "?", parameters: "**options")
+        attribute_method_suffix("_change_to_be_saved", "_in_database", parameters: false)
       end
 
       # <tt>reload</tt> the record and clears changed attributes.
@@ -43,11 +76,13 @@ module ActiveRecord
       #
       # ==== Options
       #
-      # +from+ When passed, this method will return false unless the original
-      # value is equal to the given option
+      # [+from+]
+      #   When specified, this method will return false unless the original
+      #   value is equal to the given value.
       #
-      # +to+ When passed, this method will return false unless the value was
-      # changed to the given value
+      # [+to+]
+      #   When specified, this method will return false unless the value will be
+      #   changed to the given value.
       def saved_change_to_attribute?(attr_name, **options)
         mutations_before_last_save.changed?(attr_name.to_s, **options)
       end
@@ -93,11 +128,13 @@ module ActiveRecord
       #
       # ==== Options
       #
-      # +from+ When passed, this method will return false unless the original
-      # value is equal to the given option
+      # [+from+]
+      #   When specified, this method will return false unless the original
+      #   value is equal to the given value.
       #
-      # +to+ When passed, this method will return false unless the value will be
-      # changed to the given value
+      # [+to+]
+      #   When specified, this method will return false unless the value will be
+      #   changed to the given value.
       def will_save_change_to_attribute?(attr_name, **options)
         mutations_from_database.changed?(attr_name.to_s, **options)
       end
@@ -156,20 +193,12 @@ module ActiveRecord
       end
 
       private
-        def mutations_from_database
-          sync_with_transaction_state if @transaction_state&.finalized?
+        def init_internals
           super
-        end
-
-        def mutations_before_last_save
-          sync_with_transaction_state if @transaction_state&.finalized?
-          super
-        end
-
-        def write_attribute_without_type_cast(attr_name, value)
-          result = super
-          clear_attribute_change(attr_name)
-          result
+          @mutations_before_last_save = nil
+          @mutations_from_database = nil
+          @_touch_attr_names = nil
+          @_skip_dirty_tracking = nil
         end
 
         def _touch_row(attribute_names, time)
@@ -201,20 +230,32 @@ module ActiveRecord
           @_touch_attr_names, @_skip_dirty_tracking = nil, nil
         end
 
-        def _update_record(attribute_names = attribute_names_for_partial_writes)
+        def _update_record(attribute_names = attribute_names_for_partial_updates)
           affected_rows = super
           changes_applied
           affected_rows
         end
 
-        def _create_record(attribute_names = attribute_names_for_partial_writes)
+        def _create_record(attribute_names = attribute_names_for_partial_inserts)
           id = super
           changes_applied
           id
         end
 
-        def attribute_names_for_partial_writes
-          partial_writes? ? changed_attribute_names_to_save : attribute_names
+        def attribute_names_for_partial_updates
+          partial_updates? ? changed_attribute_names_to_save : attribute_names
+        end
+
+        def attribute_names_for_partial_inserts
+          if partial_inserts?
+            changed_attribute_names_to_save
+          else
+            attribute_names.reject do |attr_name|
+              if column_for_attribute(attr_name).auto_populated?
+                !attribute_changed?(attr_name)
+              end
+            end
+          end
         end
     end
   end

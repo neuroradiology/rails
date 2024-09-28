@@ -9,7 +9,7 @@ module ActiveRecord
 
       def setup
         super
-        @connection = ActiveRecord::Base.connection
+        @connection = ActiveRecord::Base.lease_connection
         @table_name = :testings
 
         connection.create_table table_name do |t|
@@ -37,6 +37,15 @@ module ActiveRecord
         assert connection.index_name_exists?(table_name, "new_idx")
       end
 
+      def test_rename_index_with_symbol
+        # keep the names short to make Oracle and similar behave
+        connection.add_index(table_name, [:foo], name: :old_idx)
+        connection.rename_index(table_name, :old_idx, :new_idx)
+
+        assert_not connection.index_name_exists?(table_name, "old_idx")
+        assert connection.index_name_exists?(table_name, "new_idx")
+      end
+
       def test_rename_index_too_long
         too_long_index_name = good_index_name + "x"
         # keep the names short to make Oracle and similar behave
@@ -44,7 +53,7 @@ module ActiveRecord
         e = assert_raises(ArgumentError) {
           connection.rename_index(table_name, "old_idx", too_long_index_name)
         }
-        assert_match(/too long; the limit is #{connection.allowed_index_name_length} characters/, e.message)
+        assert_match(/too long; the limit is #{connection.index_name_length} characters/, e.message)
 
         assert connection.index_name_exists?(table_name, "old_idx")
       end
@@ -66,10 +75,74 @@ module ActiveRecord
         e = assert_raises(ArgumentError) {
           connection.add_index(table_name, "foo", name: too_long_index_name)
         }
-        assert_match(/too long; the limit is #{connection.allowed_index_name_length} characters/, e.message)
+        assert_match(/too long; the limit is #{connection.index_name_length} characters/, e.message)
 
         assert_not connection.index_name_exists?(table_name, too_long_index_name)
         connection.add_index(table_name, "foo", name: good_index_name)
+      end
+
+      def test_add_index_which_already_exists_does_not_raise_error_with_option
+        connection.add_index(table_name, "foo")
+
+        assert_nothing_raised do
+          connection.add_index(table_name, "foo", if_not_exists: true)
+        end
+
+        assert connection.index_name_exists?(table_name, "index_testings_on_foo")
+      end
+
+      def test_add_index_with_if_not_exists_matches_exact_index
+        connection.add_index(table_name, [:foo, :bar], unique: false, name: "index_testings_on_foo_bar")
+
+        assert connection.index_name_exists?(table_name, "index_testings_on_foo_bar")
+
+        assert_nothing_raised do
+          connection.add_index(table_name, [:foo, :bar], unique: true, if_not_exists: true)
+        end
+
+        assert connection.index_name_exists?(table_name, "index_testings_on_foo_and_bar")
+      end
+
+      def test_add_index_fallback_to_short_name
+        connection.add_index(table_name, [:foo, :bar, :first_name, :last_name, :administrator])
+        assert connection.index_name_exists?(table_name, "idx_on_foo_bar_first_name_last_name_administrator_5939248142")
+      end
+
+      def test_remove_index_which_does_not_exist_doesnt_raise_with_option
+        connection.add_index(table_name, "foo")
+
+        connection.remove_index(table_name, "foo")
+
+        assert_raises ArgumentError do
+          connection.remove_index(table_name, "foo")
+        end
+
+        assert_nothing_raised do
+          connection.remove_index(table_name, "foo", if_exists: true)
+        end
+      end
+
+      def test_remove_index_with_name_which_does_not_exist_doesnt_raise_with_option
+        connection.add_index(table_name, [:foo], name: "foo")
+
+        assert connection.index_exists?(table_name, :foo, name: "foo")
+
+        connection.remove_index(table_name, nil, name: "foo", if_exists: true)
+
+        assert_not connection.index_exists?(table_name, :foo, name: "foo")
+      end
+
+      def test_remove_index_with_column_array_which_does_not_exist_doesnt_raise_with_option
+        connection.add_index(table_name, [:foo], name: "foo")
+
+        assert connection.index_exists?(table_name, :foo, name: "foo")
+
+        assert_nothing_raised do
+          connection.remove_index(table_name, column: [:foo, :bar], if_exists: true)
+        end
+
+        assert connection.index_exists?(table_name, :foo, name: "foo")
+        assert_not connection.index_exists?(table_name, nil, column: [:foo, :bar], name: "foo")
       end
 
       def test_internal_index_with_name_matching_database_limit
@@ -104,6 +177,7 @@ module ActiveRecord
       def test_index_exists_with_custom_name_checks_columns
         connection.add_index :testings, [:foo, :bar], name: "my_index"
         assert connection.index_exists?(:testings, [:foo, :bar], name: "my_index")
+        assert connection.index_exists?(:testings, [], name: "my_index")
         assert_not connection.index_exists?(:testings, [:foo], name: "my_index")
       end
 
@@ -146,7 +220,9 @@ module ActiveRecord
 
       def test_add_index
         connection.add_index("testings", "last_name")
+        assert connection.index_exists?("testings", "last_name")
         connection.remove_index("testings", "last_name")
+        assert_not connection.index_exists?("testings", "last_name")
 
         connection.add_index("testings", ["last_name", "first_name"])
         connection.remove_index("testings", column: ["last_name", "first_name"])
@@ -181,7 +257,7 @@ module ActiveRecord
         connection.remove_index("testings", name: "named_admin")
 
         # Selected adapters support index sort order
-        if current_adapter?(:SQLite3Adapter, :Mysql2Adapter, :PostgreSQLAdapter)
+        if current_adapter?(:SQLite3Adapter, :Mysql2Adapter, :TrilogyAdapter, :PostgreSQLAdapter)
           connection.add_index("testings", ["last_name"], order: { last_name: :desc })
           connection.remove_index("testings", ["last_name"])
           connection.add_index("testings", ["last_name", "first_name"], order: { last_name: :desc })
@@ -201,11 +277,55 @@ module ActiveRecord
           connection.remove_index("testings", "last_name")
           assert_not connection.index_exists?("testings", "last_name")
         end
+
+        def test_add_index_with_included_column
+          skip("current adapter doesn't support include indexes") unless supports_index_include?
+
+          connection.add_index("testings", "last_name", include: :foo)
+          assert connection.index_exists?("testings", "last_name", include: :foo)
+
+          connection.remove_index("testings", "last_name")
+          assert_not connection.index_exists?("testings", "last_name")
+        end
+
+        def test_add_index_with_multiple_included_columns
+          skip("current adapter doesn't support include indexes") unless supports_index_include?
+
+          connection.add_index("testings", "last_name", include: [:foo, :bar])
+          assert connection.index_exists?("testings", "last_name", include: [:foo, :bar])
+
+          connection.remove_index("testings", "last_name")
+          assert_not connection.index_exists?("testings", "last_name")
+        end
+
+        def test_add_index_with_included_column_and_where_clause
+          skip("current adapter doesn't support include indexes") unless supports_index_include?
+
+          connection.add_index("testings", "last_name", include: :foo, where: "first_name = 'john doe'")
+          assert connection.index_exists?("testings", "last_name", include: :foo, where: "first_name = 'john doe'")
+
+          connection.remove_index("testings", "last_name")
+          assert_not connection.index_exists?("testings", "last_name", include: :foo, where: "first_name = 'john doe'")
+        end
+
+        def test_add_index_with_nulls_not_distinct_assert_exists_with_same_values
+          skip("current adapter doesn't support nulls not distinct") unless supports_nulls_not_distinct?
+
+          connection.add_index("testings", "last_name", nulls_not_distinct: true)
+          assert connection.index_exists?("testings", "last_name", nulls_not_distinct: true)
+        end
+
+        def test_add_index_with_nulls_not_distinct_assert_exists_with_different_values
+          skip("current adapter doesn't support nulls not distinct") unless supports_nulls_not_distinct?
+
+          connection.add_index("testings", "last_name", nulls_not_distinct: false)
+          assert_not connection.index_exists?("testings", "last_name", nulls_not_distinct: true)
+        end
       end
 
       private
         def good_index_name
-          "x" * connection.allowed_index_name_length
+          "x" * connection.index_name_length
         end
     end
   end

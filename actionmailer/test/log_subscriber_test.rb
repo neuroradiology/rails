@@ -13,9 +13,12 @@ class AMLogSubscriberTest < ActionMailer::TestCase
     ActionMailer::LogSubscriber.attach_to :action_mailer
   end
 
-  class TestMailer < ActionMailer::Base
-    def receive(mail)
-      # Do nothing
+  class BogusDelivery
+    def initialize(*)
+    end
+
+    def deliver!(mail)
+      raise "failed"
     end
   end
 
@@ -51,15 +54,16 @@ class AMLogSubscriberTest < ActionMailer::TestCase
     BaseMailer.deliveries.clear
   end
 
-  def test_receive_is_notified
-    fixture = File.read(File.expand_path("fixtures/raw_email", __dir__))
-    assert_deprecated do
-      TestMailer.receive(fixture)
-    end
+  def test_deliver_message_when_exception_happened
+    previous_delivery_method = BaseMailer.delivery_method
+    BaseMailer.delivery_method = BogusDelivery
+
+    assert_raises(RuntimeError) { BaseMailer.welcome(message_id: "123@abc").deliver_now }
     wait
+
     assert_equal(1, @logger.logged(:info).size)
-    assert_match(/Received mail/, @logger.logged(:info).first)
-    assert_equal(1, @logger.logged(:debug).size)
-    assert_match(/Jamis/, @logger.logged(:debug).first)
+    assert_equal('Failed delivery of mail 123@abc error_class=RuntimeError error_message="failed"', @logger.logged(:info).first)
+  ensure
+    BaseMailer.delivery_method = previous_delivery_method
   end
 end

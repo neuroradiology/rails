@@ -25,7 +25,7 @@ class StringInflectionsTest < ActiveSupport::TestCase
   end
 
   def test_strip_heredoc_on_a_frozen_string
-    assert "".strip_heredoc.frozen?
+    assert_predicate "".strip_heredoc, :frozen?
   end
 
   def test_strip_heredoc_on_a_string_with_no_lines
@@ -90,6 +90,19 @@ class StringInflectionsTest < ActiveSupport::TestCase
     end
   end
 
+  def test_downcase_first
+    assert_equal "try again", "Try again".downcase_first
+  end
+
+  def test_downcase_first_with_one_char
+    assert_equal "t", "T".downcase_first
+  end
+
+  def test_downcase_first_with_empty_string
+    assert_equal "", "".downcase_first
+    assert_not_predicate "".downcase_first, :frozen?
+  end
+
   def test_upcase_first
     assert_equal "What a Lovely Day", "what a Lovely Day".upcase_first
   end
@@ -100,6 +113,7 @@ class StringInflectionsTest < ActiveSupport::TestCase
 
   def test_upcase_first_with_empty_string
     assert_equal "", "".upcase_first
+    assert_not_predicate "".upcase_first, :frozen?
   end
 
   def test_camelize
@@ -110,6 +124,10 @@ class StringInflectionsTest < ActiveSupport::TestCase
 
   def test_camelize_lower
     assert_equal("capital", "Capital".camelize(:lower))
+  end
+
+  def test_camelize_upper
+    assert_equal("Capital", "Capital".camelize(:upper))
   end
 
   def test_camelize_invalid_option
@@ -358,6 +376,15 @@ class StringInflectionsTest < ActiveSupport::TestCase
     assert_equal "", "👩‍❤️‍👩".truncate_bytes(13, omission: nil)
   end
 
+  def test_truncates_bytes_preserves_encoding
+    original = String.new("a" * 30, encoding: Encoding::UTF_8)
+
+    assert_equal Encoding::UTF_8, original.truncate_bytes(15).encoding
+    assert_equal Encoding::UTF_8, original.truncate_bytes(15, omission: nil).encoding
+    assert_equal Encoding::UTF_8, original.truncate_bytes(15, omission: " ").encoding
+    assert_equal Encoding::UTF_8, original.truncate_bytes(15, omission: "🖖").encoding
+  end
+
   def test_truncate_words
     assert_equal "Hello Big World!", "Hello Big World!".truncate_words(3)
     assert_equal "Hello Big...", "Hello Big World!".truncate_words(2)
@@ -573,6 +600,14 @@ class StringConversionsTest < ActiveSupport::TestCase
     end
   end
 
+  def test_timestamp_string_to_time
+    exception = assert_raises(ArgumentError) do
+      "1604326192".to_time
+    end
+
+    assert_equal "argument out of range", exception.message
+  end
+
   def test_string_to_time_utc_offset
     with_env_tz "US/Eastern" do
       if ActiveSupport.to_time_preserves_timezone
@@ -742,7 +777,7 @@ class StringConversionsTest < ActiveSupport::TestCase
   end
 end
 
-class StringBehaviourTest < ActiveSupport::TestCase
+class StringBehaviorTest < ActiveSupport::TestCase
   def test_acts_like_string
     assert_predicate "Bambi", :acts_like_string?
   end
@@ -774,8 +809,13 @@ class OutputSafetyTest < ActiveSupport::TestCase
   def setup
     @string = +"hello"
     @object = Class.new(Object) do
-      def to_s
+      def to_str
         "other"
+      end
+    end.new
+    @to_s_object = Class.new(Object) do
+      def to_s
+        "to_s"
       end
     end.new
   end
@@ -803,6 +843,13 @@ class OutputSafetyTest < ActiveSupport::TestCase
 
   test "An object is unsafe by default" do
     assert_not_predicate @object, :html_safe?
+  end
+
+  test "Adding an object not responding to `#to_str` to a safe string is deprecated" do
+    string = @string.html_safe
+    assert_raises(NoMethodError) do
+      string << @to_s_object
+    end
   end
 
   test "Adding an object to a safe string returns a safe string" do
@@ -901,6 +948,11 @@ class OutputSafetyTest < ActiveSupport::TestCase
     assert_not_predicate @other_string, :html_safe?
   end
 
+  test "% method explicitly cast the argument to string" do
+    @other_string = "other%s"
+    assert_equal "otherto_s", @other_string % @to_s_object
+  end
+
   test "Concatting unsafe onto safe with % yields escaped safe" do
     @other_string = "other%s".html_safe
     string = @other_string % "<foo>"
@@ -969,6 +1021,12 @@ class OutputSafetyTest < ActiveSupport::TestCase
 
     assert_equal "<b>oo", string
     assert_predicate string, :html_safe?
+
+    string = "foo".html_safe
+    string[0, 2] = "<b>".html_safe
+
+    assert_equal "<b>o", string
+    assert_predicate string, :html_safe?
   end
 
   test "Replacing index of safe with unsafe yields escaped safe" do
@@ -977,9 +1035,45 @@ class OutputSafetyTest < ActiveSupport::TestCase
 
     assert_equal "&lt;b&gt;oo", string
     assert_predicate string, :html_safe?
+
+    string = "foo".html_safe
+    string[1, 1] = "<b>"
+
+    assert_equal "f&lt;b&gt;o", string
+    assert_predicate string, :html_safe?
   end
 
-  test "emits normal string yaml" do
+  if "".respond_to?(:bytesplice)
+    test "Bytesplicing safe into safe yields safe" do
+      string = "hello".html_safe
+      string.bytesplice(0, 0, "<b>".html_safe)
+
+      assert_equal "<b>hello", string
+      assert_predicate string, :html_safe?
+
+      string = "hello".html_safe
+      string.bytesplice(0..1, "<b>".html_safe)
+
+      assert_equal "<b>llo", string
+      assert_predicate string, :html_safe?
+    end
+
+    test "Bytesplicing unsafe into safe yields escaped safe" do
+      string = "hello".html_safe
+      string.bytesplice(1, 0, "<b>")
+
+      assert_equal "h&lt;b&gt;ello", string
+      assert_predicate string, :html_safe?
+
+      string = "hello".html_safe
+      string.bytesplice(1..2, "<b>")
+
+      assert_equal "h&lt;b&gt;lo", string
+      assert_predicate string, :html_safe?
+    end
+  end
+
+  test "emits normal string YAML" do
     assert_equal "foo".to_yaml, "foo".html_safe.to_yaml(foo: 1)
   end
 
@@ -1018,6 +1112,35 @@ class OutputSafetyTest < ActiveSupport::TestCase
     string = "\251 <"
     expected = "© &lt;"
     assert_equal expected, ERB::Util.html_escape_once(string)
+  end
+
+  test "ERB::Util.xml_name_escape should escape unsafe characters for XML names" do
+    unsafe_char = ">"
+    safe_char = "Á"
+    safe_char_after_start = "3"
+    starting_with_dash = "-foo"
+
+    assert_equal "_", ERB::Util.xml_name_escape(unsafe_char)
+    assert_equal "_#{safe_char}", ERB::Util.xml_name_escape(unsafe_char + safe_char)
+    assert_equal "__", ERB::Util.xml_name_escape(unsafe_char * 2)
+
+    assert_equal "__#{safe_char}_",
+                 ERB::Util.xml_name_escape("#{unsafe_char * 2}#{safe_char}#{unsafe_char}")
+
+    assert_equal safe_char + safe_char_after_start,
+                 ERB::Util.xml_name_escape(safe_char + safe_char_after_start)
+
+    assert_equal "_#{safe_char}",
+                 ERB::Util.xml_name_escape(safe_char_after_start + safe_char)
+
+    assert_equal "img_src_nonexistent_onerror_alert_1_",
+                 ERB::Util.xml_name_escape("img src=nonexistent onerror=alert(1)")
+
+    common_dangerous_chars = "&<>\"' %*+,/;=^|"
+    assert_equal "_" * common_dangerous_chars.size,
+                 ERB::Util.xml_name_escape(common_dangerous_chars)
+
+    assert_equal "_foo", ERB::Util.xml_name_escape(starting_with_dash)
   end
 end
 

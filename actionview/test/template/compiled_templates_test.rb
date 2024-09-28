@@ -9,7 +9,6 @@ class CompiledTemplatesTest < ActiveSupport::TestCase
     super
     view_paths = ActionController::Base.view_paths
     view_paths.each(&:clear_cache)
-    ActionView::LookupContext.fallbacks.each(&:clear_cache)
     @view_class = ActionView::Base.with_empty_template_cache
   end
 
@@ -49,10 +48,6 @@ class CompiledTemplatesTest < ActiveSupport::TestCase
 
   def test_template_with_unicode_identifier
     assert_equal "🎂", render(template: "test/render_file_unicode_local", locals: { 🎃: "🎂" })
-  end
-
-  def test_template_with_instance_variable_identifier
-    assert_equal "bar", render(template: "test/render_file_instance_variable", locals: { "@foo": "bar" })
   end
 
   def test_template_gets_recompiled_when_using_different_keys_in_local_assigns

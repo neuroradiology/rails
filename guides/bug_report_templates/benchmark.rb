@@ -5,9 +5,9 @@ require "bundler/inline"
 gemfile(true) do
   source "https://rubygems.org"
 
-  git_source(:github) { |repo| "https://github.com/#{repo}.git" }
-
-  gem "rails", github: "rails/rails"
+  gem "rails"
+  # If you want to test against edge Rails replace the previous line with this:
+  # gem "rails", github: "rails/rails", branch: "main"
   gem "benchmark-ips"
 end
 
@@ -29,11 +29,11 @@ end
 # scenarios. Ideally, they should be based on real-world scenarios extracted
 # from production applications.
 SCENARIOS = {
-  "Empty"            => "",
-  "Single Space"     => " ",
-  "Two Spaces"       => "  ",
-  "Mixed Whitspaces" => " \t\r\n",
-  "Very Long String" => " " * 100
+  "Empty"             => "",
+  "Single Space"      => " ",
+  "Two Spaces"        => "  ",
+  "Mixed Whitespaces" => " \t\r\n",
+  "Very Long String"  => " " * 100
 }
 
 SCENARIOS.each_pair do |name, value|

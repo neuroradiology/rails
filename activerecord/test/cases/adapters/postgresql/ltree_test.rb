@@ -10,17 +10,13 @@ class PostgresqlLtreeTest < ActiveRecord::PostgreSQLTestCase
   end
 
   def setup
-    @connection = ActiveRecord::Base.connection
+    @connection = ActiveRecord::Base.lease_connection
 
     enable_extension!("ltree", @connection)
 
-    @connection.transaction do
-      @connection.create_table("ltrees") do |t|
-        t.ltree "path"
-      end
+    @connection.create_table("ltrees") do |t|
+      t.ltree "path"
     end
-  rescue ActiveRecord::StatementInvalid
-    skip "do not test on PG without ltree"
   end
 
   teardown do

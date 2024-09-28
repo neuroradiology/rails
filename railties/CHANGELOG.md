@@ -1,171 +1,185 @@
-*   `rails stats` will now count TypeScript files toward JavaScript stats.
+## Rails 8.0.0.beta1 (September 26, 2024) ##
 
-    *Joshua Cody*
+*   Exit `rails g` with code 1 if generator could not be found.
 
-*   Run `git init` when generating plugins.
+    Previously `rails g` returned 0, which would make it harder to catch typos in scripts calling `rails g`.
 
-    Opt out with `--skip-git`.
+    *Christopher Özbek*
 
-    *OKURA Masafumi*
+*   Remove `require_*` statements from application.css to align with the transition from Sprockets to Propshaft.
 
-*   Add benchmark generator.
+    With Propshaft as the default asset pipeline in Rails 8, the require_tree and require_self clauses in application.css are no longer necessary, as they were specific to Sprockets. Additionally, the comment has been updated to clarify that CSS precedence now follows standard cascading order without automatic prioritization by the asset pipeline.
 
-    Introduce benchmark generator to benchmark Rails applications.
+    *Eduardo Alencar*
 
-      `rails generate benchmark opt_compare`
+*   Do not include redis by default in generated Dev Containers.
 
-    This creates a benchmark file that uses [`benchmark-ips`](https://github.com/evanphx/benchmark-ips).
-    By default, two code blocks can be benchmarked using the `before` and `after` reports.
+    Now that applications use the Solid Queue and Solid Cache gems by default, we do not need to include redis
+    in the Dev Container. We will only include redis if `--skip-solid` is used when generating an app that uses
+    Active Job or Action Cable.
 
-    You can run the generated benchmark file using:
-      `ruby script/benchmarks/opt_compare.rb`
+    When generating a Dev Container for an existing app, we will not include redis if either of the solid gems
+    are in use.
 
-    *Kevin Jalbert*, *Gannon McGibbon*
+    *Andrew Novoselac*
 
-*   Cache compiled view templates when running tests by default.
+*   Use [Solid Cable](https://github.com/rails/solid_cable) as the default Action Cable adapter in production, configured as a separate queue database in config/database.yml. It keeps messages in a table and continuously polls for updates. This makes it possible to drop the common dependency on Redis, if it isn't needed for any other purpose. Despite polling, the performance of Solid Cable is comparable to Redis in most situations. And in all circumstances, it makes it easier to deploy Rails when Redis is no longer a required dependency for Action Cable functionality.
 
-    When generating a new app without `--skip-spring`, caching classes is
-    disabled in `environments/test.rb`. This implicitly disables caching
-    view templates too. This change will enable view template caching by
-    adding this to the generated `environments/test.rb`:
+    *DHH*
+
+*   Use [Solid Queue](https://github.com/rails/solid_queue) as the default Active Job backend in production, configured as a separate queue database in config/database.yml. In a single-server deployment, it'll run as a Puma plugin. This is configured in `config/deploy.yml` and can easily be changed to use a dedicated jobs machine.
+
+    *DHH*
+
+*   Use [Solid Cache](https://github.com/rails/solid_cache) as the default Rails.cache backend in production, configured as a separate cache database in config/database.yml.
+
+    *DHH*
+
+*   Add Rails::Rack::SilenceRequest middleware and use it via `config.silence_healthcheck_path = path`
+    to silence requests to "/up". This prevents the Kamal-required health checks from clogging up
+    the production logs.
+
+    *DHH*
+
+*   Introduce `mariadb-mysql` and `mariadb-trilogy` database options for `rails new`
+
+    When used with the `--devcontainer` flag, these options will use `mariadb` as the database for the
+    Dev Container. The original `mysql` and `trilogy` options will use `mysql`. Users who are not
+    generating a Dev Container do not need to use the new options.
+
+    *Andrew Novoselac*
+
+*   Deprecate `::STATS_DIRECTORIES`.
+
+    The global constant `STATS_DIRECTORIES` has been deprecated in favor of
+    `Rails::CodeStatistics.register_directory`.
+
+    Add extra directories with `Rails::CodeStatistics.register_directory(label, path)`:
 
     ```ruby
-    config.action_view.cache_template_loading = true
+    require "rails/code_statistics"
+    Rails::CodeStatistics.register_directory('My Directory', 'path/to/dir')
     ```
 
-    *Jorge Manrubia*
+    *Petrik de Heus*
 
-*   Introduce middleware move operations.
+*   Enable query log tags by default on development env
 
-    With this change, you no longer need to delete and reinsert a middleware to
-    move it from one place to another in the stack:
+    This can be used to trace troublesome SQL statements back to the application
+    code that generated these statements. It is also useful when using multiple
+    databases because the query logs can identify which database is being used.
 
-    ```ruby
-    config.middleware.move_before ActionDispatch::Flash, Magical::Unicorns
+    *Matheus Richard*
+
+*   Defer route drawing to the first request, or when url_helpers are called
+
+    Executes the first routes reload in middleware, or when a route set's
+    url_helpers receives a route call / asked if it responds to a route.
+    Previously, this was executed unconditionally on boot, which can
+    slow down boot time unnecessarily for larger apps with lots of routes.
+
+    Environments like production that have `config.eager_load = true` will
+    continue to eagerly load routes on boot.
+
+    *Gannon McGibbon*
+
+*   Generate form helpers to use `textarea*` methods instead of `text_area*` methods
+
+    *Sean Doyle*
+
+*   Add authentication generator to give a basic start to an authentication system using database-tracked sessions and password reset.
+
+    Generate with...
+
+    ```
+    bin/rails generate authentication
     ```
 
-    This will move the `Magical::Unicorns` middleware before
-    `ActionDispatch::Flash`. You can also move it after with:
+    Generated files:
 
-    ```ruby
-    config.middleware.move_after ActionDispatch::Flash, Magical::Unicorns
+    ```
+    app/models/current.rb
+    app/models/user.rb
+    app/models/session.rb
+    app/controllers/sessions_controller.rb
+    app/controllers/passwords_controller.rb
+    app/mailers/passwords_mailer.rb
+    app/views/sessions/new.html.erb
+    app/views/passwords/new.html.erb
+    app/views/passwords/edit.html.erb
+    app/views/passwords_mailer/reset.html.erb
+    app/views/passwords_mailer/reset.text.erb
+    db/migrate/xxxxxxx_create_users.rb
+    db/migrate/xxxxxxx_create_sessions.rb
+    test/mailers/previews/passwords_mailer_preview.rb
     ```
 
-    *Genadi Samokovarov*
+    *DHH*
 
-*   Generators that inherit from NamedBase respect `--force` option.
 
-    *Josh Brody*
+*   Add not-null type modifier to migration attributes.
 
-*   Allow configuration of eager_load behaviour for rake environment:
+    Generating with...
 
-        config.rake_eager_load
+    ```
+    bin/rails generate migration CreateUsers email_address:string!:uniq password_digest:string!
+    ```
 
-    Defaults to `false` as per previous behaviour.
-
-    *Thierry Joyal*
-
-*   Ensure Rails migration generator respects system-wide primary key config.
-
-    When rails is configured to use a specific primary key type:
+    Produces:
 
     ```ruby
-    config.generators do |g|
-      g.orm :active_record, primary_key_type: :uuid
+    class CreateUsers < ActiveRecord::Migration[8.0]
+      def change
+        create_table :users do |t|
+          t.string :email_address, null: false
+          t.string :password_digest, null: false
+
+          t.timestamps
+        end
+        add_index :users, :email_address, unique: true
+      end
     end
     ```
 
-    Previously:
+    *DHH*
+
+*   Add a `script` folder to applications, and a scripts generator.
+
+    The new `script` folder is meant to hold one-off or general purpose scripts,
+    such as data migration scripts, cleanup scripts, etc.
+
+    A new script generator allows you to create such scripts:
 
     ```
-    $ bin/rails g migration add_location_to_users location:references
+    bin/rails generate script my_script
+    bin/rails generate script data/backfill
     ```
 
-    The references line in the migration would not have `type: :uuid`.
-    This change causes the type to be applied appropriately.
+    You can run the generated script using:
 
-    *Louis-Michel Couture*, *Dermot Haughey*
-
-*   Deprecate `Rails::DBConsole#config`.
-
-    `Rails::DBConsole#config` is deprecated without replacement. Use `Rails::DBConsole.db_config.configuration_hash` instead.
-
-    *Eileen M. Uchitelle*, *John Crepezzi*
-
-*   `Rails.application.config_for` merges shared configuration deeply.
-
-    ```yaml
-    # config/example.yml
-    shared:
-      foo:
-        bar:
-          baz: 1
-    development:
-      foo:
-        bar:
-          qux: 2
+    ```
+    bundle exec ruby script/my_script.rb
+    bundle exec ruby script/data/backfill.rb
     ```
 
-    ```ruby
-    # Previously
-    Rails.application.config_for(:example)[:foo][:bar] #=> { qux: 2 }
+    *Jerome Dalbert*, *Haroon Ahmed*
 
-    # Now
-    Rails.application.config_for(:example)[:foo][:bar] #=> { baz: 1, qux: 2 }
-    ```
+*   Deprecate `bin/rake stats` in favor of `bin/rails stats`.
 
-    *Yuhei Kiriyama*
+    *Juan Vásquez*
 
-*   Remove access to values in nested hashes returned by `Rails.application.config_for` via String keys.
+*   Add internal page `/rails/info/notes`, that displays the same information as `bin/rails notes`.
 
-    ```yaml
-    # config/example.yml
-    development:
-      options:
-        key: value
-    ```
+    *Deepak Mahakale*
 
-    ```ruby
-    Rails.application.config_for(:example).options
-    ```
+*   Add Rubocop and GitHub Actions to plugin generator.
+    This can be skipped using --skip-rubocop and --skip-ci.
 
-    This used to return a Hash on which you could access values with String keys. This was deprecated in 6.0, and now doesn't work anymore.
+    *Chris Oliver*
 
-    *Étienne Barrié*
+*   Use Kamal for deployment by default, which includes generating a Rails-specific config/deploy.yml.
+    This can be skipped using --skip-kamal. See more: https://kamal-deploy.org/
 
-*   Configuration files for environments (`config/environments/*.rb`) are
-    now able to modify `autoload_paths`, `autoload_once_paths`, and
-    `eager_load_paths`.
+    *DHH*
 
-    As a consequence, applications cannot autoload within those files. Before, they technically could, but changes in autoloaded classes or modules had no effect anyway in the configuration because reloading does not reboot.
-
-    Ways to use application code in these files:
-
-    * Define early in the boot process a class that is not reloadable, from which the application takes configuration values that get passed to the framework.
-
-        ```ruby
-        # In config/application.rb, for example.
-        require "#{Rails.root}/lib/my_app/config"
-
-        # In config/environments/development.rb, for example.
-        config.foo = MyApp::Config.foo
-        ```
-
-    * If the class has to be reloadable, then wrap the configuration code in a `to_prepare` block:
-
-        ```ruby
-        config.to_prepare do
-          config.foo = MyModel.foo
-        end
-        ```
-
-      That assigns the latest `MyModel.foo` to `config.foo` when the application boots, and each time there is a reload. But whether that has an effect or not depends on the configuration point, since it is not uncommon for engines to read the application configuration during initialization and set their own state from them. That process happens only on boot, not on reloads, and if that is how `config.foo` worked, resetting it would have no effect in the state of the engine.
-
-    *Allen Hsu* & *Xavier Noria*
-
-*   Support using environment variable to set pidfile.
-
-    *Ben Thorner*
-
-
-Please check [6-0-stable](https://github.com/rails/rails/blob/6-0-stable/railties/CHANGELOG.md) for previous changes.
+Please check [7-2-stable](https://github.com/rails/rails/blob/7-2-stable/railties/CHANGELOG.md) for previous changes.

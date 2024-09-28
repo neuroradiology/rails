@@ -2,11 +2,13 @@
 
 module ActiveRecord
   ###
+  # = Active Record \Result
+  #
   # This class encapsulates a result returned from calling
   # {#exec_query}[rdoc-ref:ConnectionAdapters::DatabaseStatements#exec_query]
   # on any database connection adapter. For example:
   #
-  #   result = ActiveRecord::Base.connection.exec_query('SELECT id, title, body FROM posts')
+  #   result = ActiveRecord::Base.lease_connection.exec_query('SELECT id, title, body FROM posts')
   #   result # => #<ActiveRecord::Result:0xdeadbeef>
   #
   #   # Get the column names of the result:
@@ -34,13 +36,77 @@ module ActiveRecord
   class Result
     include Enumerable
 
+    class IndexedRow
+      def initialize(column_indexes, row)
+        @column_indexes = column_indexes
+        @row = row
+      end
+
+      def size
+        @column_indexes.size
+      end
+      alias_method :length, :size
+
+      def each_key(&block)
+        @column_indexes.each_key(&block)
+      end
+
+      def keys
+        @column_indexes.keys
+      end
+
+      def ==(other)
+        if other.is_a?(Hash)
+          to_hash == other
+        else
+          super
+        end
+      end
+
+      def key?(column)
+        @column_indexes.key?(column)
+      end
+
+      def fetch(column)
+        if index = @column_indexes[column]
+          @row[index]
+        elsif block_given?
+          yield
+        else
+          raise KeyError, "key not found: #{column.inspect}"
+        end
+      end
+
+      def [](column)
+        if index = @column_indexes[column]
+          @row[index]
+        end
+      end
+
+      def to_h
+        @column_indexes.transform_values { |index| @row[index] }
+      end
+      alias_method :to_hash, :to_h
+    end
+
     attr_reader :columns, :rows, :column_types
 
-    def initialize(columns, rows, column_types = {})
-      @columns      = columns
+    def self.empty(async: false) # :nodoc:
+      if async
+        EMPTY_ASYNC
+      else
+        EMPTY
+      end
+    end
+
+    def initialize(columns, rows, column_types = nil)
+      # We freeze the strings to prevent them getting duped when
+      # used as keys in ActiveRecord::Base's @attributes hash
+      @columns      = columns.each(&:-@).freeze
       @rows         = rows
       @hash_rows    = nil
-      @column_types = column_types
+      @column_types = column_types || EMPTY_HASH
+      @column_indexes = nil
     end
 
     # Returns true if this result set includes the column named +name+
@@ -54,27 +120,18 @@ module ActiveRecord
     end
 
     # Calls the given block once for each element in row collection, passing
-    # row as parameter.
+    # row as parameter. Each row is a Hash-like, read only object.
+    #
+    # To get real hashes, use +.to_a.each+.
     #
     # Returns an +Enumerator+ if no block is given.
-    def each
+    def each(&block)
       if block_given?
-        hash_rows.each { |row| yield row }
+        indexed_rows.each(&block)
       else
-        hash_rows.to_enum { @rows.size }
+        indexed_rows.to_enum { @rows.size }
       end
     end
-
-    def to_hash
-      ActiveSupport::Deprecation.warn(<<-MSG.squish)
-        `ActiveRecord::Result#to_hash` has been renamed to `to_a`.
-        `to_hash` is deprecated and will be removed in Rails 6.1.
-      MSG
-      to_a
-    end
-
-    alias :map! :map
-    alias :collect! :map
 
     # Returns true if there are no records, otherwise false.
     def empty?
@@ -92,31 +149,38 @@ module ActiveRecord
       hash_rows[idx]
     end
 
-    # Returns the first record from the rows collection.
-    # If the rows collection is empty, returns +nil+.
-    def first
-      return nil if @rows.empty?
-      Hash[@columns.zip(@rows.first)]
+    # Returns the last record from the rows collection.
+    def last(n = nil)
+      n ? hash_rows.last(n) : hash_rows.last
     end
 
-    # Returns the last record from the rows collection.
-    # If the rows collection is empty, returns +nil+.
-    def last
-      return nil if @rows.empty?
-      Hash[@columns.zip(@rows.last)]
+    def result # :nodoc:
+      self
+    end
+
+    def cancel # :nodoc:
+      self
     end
 
     def cast_values(type_overrides = {}) # :nodoc:
       if columns.one?
         # Separated to avoid allocating an array per row
 
-        type = column_type(columns.first, type_overrides)
+        type = if type_overrides.is_a?(Array)
+          type_overrides.first
+        else
+          column_type(columns.first, 0, type_overrides)
+        end
 
         rows.map do |(value)|
           type.deserialize(value)
         end
       else
-        types = columns.map { |name| column_type(name, type_overrides) }
+        types = if type_overrides.is_a?(Array)
+          type_overrides
+        else
+          columns.map.with_index { |name, i| column_type(name, i, type_overrides) }
+        end
 
         rows.map do |values|
           Array.new(values.size) { |i| types[i].deserialize(values[i]) }
@@ -125,58 +189,61 @@ module ActiveRecord
     end
 
     def initialize_copy(other)
-      @columns      = columns.dup
-      @rows         = rows.dup
+      @rows = rows.dup
       @column_types = column_types.dup
-      @hash_rows    = nil
+    end
+
+    def freeze # :nodoc:
+      hash_rows.freeze
+      indexed_rows.freeze
+      super
+    end
+
+    def column_indexes # :nodoc:
+      @column_indexes ||= begin
+        index = 0
+        hash = {}
+        length  = columns.length
+        while index < length
+          hash[columns[index]] = index
+          index += 1
+        end
+        hash.freeze
+      end
     end
 
     private
-      def column_type(name, type_overrides = {})
+      def column_type(name, index, type_overrides)
         type_overrides.fetch(name) do
-          column_types.fetch(name, Type.default_value)
+          column_types.fetch(index) do
+            column_types.fetch(name, Type.default_value)
+          end
+        end
+      end
+
+      def indexed_rows
+        @indexed_rows ||= begin
+          columns = column_indexes
+          @rows.map { |row| IndexedRow.new(columns, row) }.freeze
         end
       end
 
       def hash_rows
-        @hash_rows ||=
-          begin
-            # We freeze the strings to prevent them getting duped when
-            # used as keys in ActiveRecord::Base's @attributes hash
-            columns = @columns.map(&:-@)
-            length  = columns.length
-            template = nil
-
-            @rows.map { |row|
-              if template
-                # We use transform_values to build subsequent rows from the
-                # hash of the first row. This is faster because we avoid any
-                # reallocs and in Ruby 2.7+ avoid hashing entirely.
-                index = -1
-                template.transform_values do
-                  row[index += 1]
-                end
-              else
-                # In the past we used Hash[columns.zip(row)]
-                #  though elegant, the verbose way is much more efficient
-                #  both time and memory wise cause it avoids a big array allocation
-                #  this method is called a lot and needs to be micro optimised
-                hash = {}
-
-                index = 0
-                while index < length
-                  hash[columns[index]] = row[index]
-                  index += 1
-                end
-
-                # It's possible to select the same column twice, in which case
-                # we can't use a template
-                template = hash if hash.length == length
-
-                hash
-              end
-            }
-          end
+        # We use transform_values to rows.
+        # This is faster because we avoid any reallocs and avoid hashing entirely.
+        @hash_rows ||= @rows.map do |row|
+          column_indexes.transform_values { |index| row[index] }
+        end
       end
+
+      empty_array = [].freeze
+      EMPTY_HASH = {}.freeze
+      private_constant :EMPTY_HASH
+
+      EMPTY = new(empty_array, empty_array, EMPTY_HASH).freeze
+      private_constant :EMPTY
+
+      EMPTY_ASYNC = FutureResult.wrap(EMPTY).freeze
+      private_constant :EMPTY_ASYNC
   end
 end

@@ -44,12 +44,19 @@ module ActionMailbox
   #    <tt>https://example.com/rails/action_mailbox/mailgun/inbound_emails/mime</tt>.
   class Ingresses::Mailgun::InboundEmailsController < ActionMailbox::BaseController
     before_action :authenticate
+    param_encoding :create, "body-mime", Encoding::ASCII_8BIT
 
     def create
-      ActionMailbox::InboundEmail.create_and_extract_message_id! params.require("body-mime")
+      ActionMailbox::InboundEmail.create_and_extract_message_id! mail
     end
 
     private
+      def mail
+        params.require("body-mime").tap do |raw_email|
+          raw_email.prepend("X-Original-To: ", params.require(:recipient), "\n") if params.key?(:recipient)
+        end
+      end
+
       def authenticate
         head :unauthorized unless authenticated?
       end
@@ -71,21 +78,7 @@ module ActionMailbox
       end
 
       def key
-        if Rails.application.credentials.dig(:action_mailbox, :mailgun_api_key)
-          ActiveSupport::Deprecation.warn(<<-MSG.squish)
-            Rails.application.credentials.action_mailbox.api_key is deprecated and will be ignored in Rails 6.2.
-            Use Rails.application.credentials.action_mailbox.signing_key instead.
-          MSG
-          Rails.application.credentials.dig(:action_mailbox, :mailgun_api_key)
-        elsif ENV["MAILGUN_INGRESS_API_KEY"]
-          ActiveSupport::Deprecation.warn(<<-MSG.squish)
-            The MAILGUN_INGRESS_API_KEY environment variable is deprecated and will be ignored in Rails 6.2.
-            Use MAILGUN_INGRESS_SIGNING_KEY instead.
-          MSG
-          ENV["MAILGUN_INGRESS_API_KEY"]
-        else
-          Rails.application.credentials.dig(:action_mailbox, :mailgun_signing_key) || ENV["MAILGUN_INGRESS_SIGNING_KEY"]
-        end
+        Rails.application.credentials.dig(:action_mailbox, :mailgun_signing_key) || ENV["MAILGUN_INGRESS_SIGNING_KEY"]
       end
 
       class Authenticator

@@ -3,7 +3,7 @@
 require "active_support/concern"
 
 class Module
-  # = Bite-sized separation of concerns
+  # == Bite-sized separation of concerns
   #
   # We often find ourselves with a medium-sized chunk of behavior that we'd
   # like to extract, but only mix in to a single class.
@@ -18,9 +18,9 @@ class Module
   # with a comment, as a least-bad alternative. Using modules in separate files
   # means tedious sifting to get a big-picture view.
   #
-  # = Dissatisfying ways to separate small concerns
+  # == Dissatisfying ways to separate small concerns
   #
-  # == Using comments:
+  # === Using comments:
   #
   #   class Todo < ApplicationRecord
   #     # Other todo implementation
@@ -37,7 +37,7 @@ class Module
   #       end
   #   end
   #
-  # == With an inline module:
+  # === With an inline module:
   #
   # Noisy syntax.
   #
@@ -61,7 +61,7 @@ class Module
   #     include EventTracking
   #   end
   #
-  # == Mix-in noise exiled to its own file:
+  # === Mix-in noise exiled to its own file:
   #
   # Once our chunk of behavior starts pushing the scroll-to-understand-it
   # boundary, we give in and move it to a separate file. At this size, the
@@ -75,7 +75,7 @@ class Module
   #     include TodoEventTracking
   #   end
   #
-  # = Introducing Module#concerning
+  # == Introducing Module#concerning
   #
   # By quieting the mix-in noise, we arrive at a natural, low-ceremony way to
   # separate bite-sized concerns.
@@ -105,10 +105,10 @@ class Module
   # * clean up monolithic junk-drawer classes by separating their concerns, and
   # * stop leaning on protected/private for crude "this is internal stuff" modularity.
   #
-  # === Prepending `concerning`
+  # === Prepending concerning
   #
-  # `concerning` supports a `prepend: true` argument which will `prepend` the
-  # concern instead of using `include` for it.
+  # <tt>concerning</tt> supports a <tt>prepend: true</tt> argument which will <tt>prepend</tt> the
+  # concern instead of using <tt>include</tt> for it.
   module Concerning
     # Define a new concern and mix it in.
     def concerning(topic, prepend: false, &block)

@@ -2,18 +2,26 @@
 
 module ActiveJob
   module QueueAdapters
-    # == Test adapter for Active Job
+    # = Test adapter for Active Job
     #
     # The test adapter should be used only in testing. Along with
-    # <tt>ActiveJob::TestCase</tt> and <tt>ActiveJob::TestHelper</tt>
-    # it makes a great tool to test your Rails application.
+    # ActiveJob::TestCase and ActiveJob::TestHelper
+    # it makes a great tool to test your \Rails application.
     #
-    # To use the test adapter set queue_adapter config to +:test+.
+    # To use the test adapter set +queue_adapter+ config to +:test+.
     #
     #   Rails.application.config.active_job.queue_adapter = :test
-    class TestAdapter
-      attr_accessor(:perform_enqueued_jobs, :perform_enqueued_at_jobs, :filter, :reject, :queue, :at)
+    class TestAdapter < AbstractAdapter
+      attr_accessor(:perform_enqueued_jobs, :perform_enqueued_at_jobs, :filter, :reject, :queue, :at, :enqueue_after_transaction_commit)
       attr_writer(:enqueued_jobs, :performed_jobs)
+
+      def initialize(enqueue_after_transaction_commit: true)
+        @enqueue_after_transaction_commit = enqueue_after_transaction_commit
+      end
+
+      def enqueue_after_transaction_commit? # :nodoc:
+        @enqueue_after_transaction_commit
+      end
 
       # Provides a store of all the enqueued jobs with the TestAdapter so you can check them.
       def enqueued_jobs
@@ -25,18 +33,14 @@ module ActiveJob
         @performed_jobs ||= []
       end
 
-      def enqueue(job) #:nodoc:
-        return if filtered?(job)
-
+      def enqueue(job) # :nodoc:
         job_data = job_to_hash(job)
-        perform_or_enqueue(perform_enqueued_jobs, job, job_data)
+        perform_or_enqueue(perform_enqueued_jobs && !filtered?(job), job, job_data)
       end
 
-      def enqueue_at(job, timestamp) #:nodoc:
-        return if filtered?(job)
-
+      def enqueue_at(job, timestamp) # :nodoc:
         job_data = job_to_hash(job, at: timestamp)
-        perform_or_enqueue(perform_enqueued_at_jobs, job, job_data)
+        perform_or_enqueue(perform_enqueued_at_jobs && !filtered?(job), job, job_data)
       end
 
       private
@@ -45,13 +49,14 @@ module ActiveJob
             job_data[:job] = job.class
             job_data[:args] = job_data.fetch("arguments")
             job_data[:queue] = job_data.fetch("queue_name")
+            job_data[:priority] = job_data.fetch("priority")
           end.merge(extras)
         end
 
         def perform_or_enqueue(perform, job, job_data)
           if perform
             performed_jobs << job_data
-            Base.execute job.serialize
+            Base.execute(job.serialize)
           else
             enqueued_jobs << job_data
           end
@@ -62,7 +67,7 @@ module ActiveJob
         end
 
         def filtered_time?(job)
-          job.scheduled_at > at.to_f if at && job.scheduled_at
+          job.scheduled_at > at if at && job.scheduled_at
         end
 
         def filtered_queue?(job)

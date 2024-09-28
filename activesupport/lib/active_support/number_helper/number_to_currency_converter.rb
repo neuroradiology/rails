@@ -8,20 +8,21 @@ module ActiveSupport
       self.namespace = :currency
 
       def convert
-        number = self.number.to_s.strip
-        number_f = number.to_f
         format = options[:format]
 
-        if number_f.negative?
-          number = number_f.abs
-
-          unless options[:precision] == 0 && number < 0.5
-            format = options[:negative_format]
+        number_d = valid_bigdecimal
+        if number_d
+          if number_d.negative?
+            number_d = number_d.abs
+            format = options[:negative_format] if (number_d * 10**options[:precision]) >= 0.5
           end
+          number_s = NumberToRoundedConverter.convert(number_d, options)
+        else
+          number_s = number.to_s.strip
+          format = options[:negative_format] if number_s.sub!(/^-/, "")
         end
 
-        rounded_number = NumberToRoundedConverter.convert(number, options)
-        format.gsub("%n", rounded_number).gsub("%u", options[:unit])
+        format.gsub("%n", number_s).gsub("%u", options[:unit])
       end
 
       private

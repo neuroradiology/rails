@@ -1,8 +1,12 @@
 # frozen_string_literal: true
 
 class Car < ActiveRecord::Base
+  belongs_to :person, counter_cache: true
   has_many :bulbs
-  has_many :all_bulbs, -> { unscope where: :name }, class_name: "Bulb"
+  has_many :all_bulbs, -> { unscope(where: :name) }, class_name: "Bulb"
+  has_many :all_bulbs2, -> { unscope(:where) }, class_name: "Bulb"
+  has_many :other_bulbs, -> { unscope(where: :name).where(name: "other") }, class_name: "Bulb"
+  has_many :old_bulbs, -> { rewhere(name: "old") }, class_name: "Bulb"
   has_many :funky_bulbs, class_name: "FunkyBulb", dependent: :destroy
   has_many :failed_bulbs, class_name: "FailedBulb", dependent: :destroy
   has_many :foo_bulbs, -> { where(name: "foo") }, class_name: "Bulb"
@@ -10,7 +14,7 @@ class Car < ActiveRecord::Base
 
   has_one :bulb
 
-  has_many :tyres
+  has_many :tyres, counter_cache: :custom_tyres_count
   has_many :engines, dependent: :destroy, inverse_of: :my_car
   has_many :wheels, as: :wheelable, dependent: :destroy
 

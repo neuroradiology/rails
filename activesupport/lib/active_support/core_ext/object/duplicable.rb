@@ -28,21 +28,41 @@ class Object
   end
 end
 
-class Method
-  # Methods are not duplicable:
-  #
-  #  method(:puts).duplicable? # => false
-  #  method(:puts).dup         # => TypeError: allocator undefined for Method
-  def duplicable?
-    false
+methods_are_duplicable = begin
+  Object.instance_method(:duplicable?).dup
+  true
+rescue TypeError
+  false
+end
+
+unless methods_are_duplicable
+  class Method
+    # Methods are not duplicable:
+    #
+    #   method(:puts).duplicable? # => false
+    #   method(:puts).dup         # => TypeError: allocator undefined for Method
+    def duplicable?
+      false
+    end
+  end
+
+  class UnboundMethod
+    # Unbound methods are not duplicable:
+    #
+    #   method(:puts).unbind.duplicable? # => false
+    #   method(:puts).unbind.dup         # => TypeError: allocator undefined for UnboundMethod
+    def duplicable?
+      false
+    end
   end
 end
 
-class UnboundMethod
-  # Unbound methods are not duplicable:
+require "singleton"
+
+module Singleton
+  # Singleton instances are not duplicable:
   #
-  #  method(:puts).unbind.duplicable? # => false
-  #  method(:puts).unbind.dup         # => TypeError: allocator undefined for UnboundMethod
+  #   Class.new.include(Singleton).instance.dup # TypeError (can't dup instance of singleton
   def duplicable?
     false
   end

@@ -9,8 +9,8 @@ require "active_support/log_subscriber/test_helper"
 class LogSubscriberTest < ActiveRecord::TestCase
   include ActiveSupport::LogSubscriber::TestHelper
   include ActiveSupport::Logger::Severity
-  REGEXP_CLEAR = Regexp.escape(ActiveRecord::LogSubscriber::CLEAR)
-  REGEXP_BOLD = Regexp.escape(ActiveRecord::LogSubscriber::BOLD)
+  REGEXP_CLEAR = Regexp.escape("\e[#{ActiveRecord::LogSubscriber::MODES[:clear]}m")
+  REGEXP_BOLD = Regexp.escape("\e[#{ActiveRecord::LogSubscriber::MODES[:bold]}m")
   REGEXP_MAGENTA = Regexp.escape(ActiveRecord::LogSubscriber::MAGENTA)
   REGEXP_CYAN = Regexp.escape(ActiveRecord::LogSubscriber::CYAN)
   SQL_COLORINGS = {
@@ -44,7 +44,7 @@ class LogSubscriberTest < ActiveRecord::TestCase
   def setup
     @old_logger = ActiveRecord::Base.logger
     Developer.primary_key
-    ActiveRecord::Base.connection.materialize_transactions
+    ActiveRecord::Base.lease_connection.materialize_transactions
     super
     ActiveRecord::LogSubscriber.attach_to(:active_record)
   end
@@ -96,6 +96,16 @@ class LogSubscriberTest < ActiveRecord::TestCase
     end
   end
 
+  def test_logging_sql_coloration_disabled
+    logger = TestDebugLogSubscriber.new
+    logger.colorize_logging = false
+
+    SQL_COLORINGS.each do |verb, color_regex|
+      logger.sql(Event.new(0.9, sql: verb.to_s))
+      assert_no_match(/#{REGEXP_BOLD}#{color_regex}#{verb}#{REGEXP_CLEAR}/i, logger.debugs.last)
+    end
+  end
+
   def test_basic_payload_name_logging_coloration_generic_sql
     logger = TestDebugLogSubscriber.new
     logger.colorize_logging = true
@@ -121,6 +131,12 @@ class LogSubscriberTest < ActiveRecord::TestCase
       logger.sql(Event.new(0.9, sql: verb.to_s, name: "ANY SPECIFIC NAME"))
       assert_match(/#{REGEXP_BOLD}#{REGEXP_CYAN}ANY SPECIFIC NAME \(0\.9ms\)#{REGEXP_CLEAR}/i, logger.debugs.last)
     end
+  end
+
+  def test_async_query
+    logger = TestDebugLogSubscriber.new
+    logger.sql(Event.new(0.9, sql: "SELECT * from models", name: "Model Load", async: true, lock_wait: 0.01))
+    assert_match(/ASYNC Model Load \(0\.0ms\) \(db time 0\.9ms\)  SELECT/i, logger.debugs.last)
   end
 
   def test_query_logging_coloration_with_nested_select
@@ -173,28 +189,28 @@ class LogSubscriberTest < ActiveRecord::TestCase
     assert_match(/SELECT .*?FROM .?developers.?/i, @logger.logged(:debug).last)
   end
 
-  def test_vebose_query_logs
-    ActiveRecord::Base.verbose_query_logs = true
+  def test_verbose_query_logs
+    ActiveRecord.verbose_query_logs = true
 
     logger = TestDebugLogSubscriber.new
     logger.sql(Event.new(0, sql: "hi mom!"))
     assert_equal 2, @logger.logged(:debug).size
     assert_match(/↳/, @logger.logged(:debug).last)
   ensure
-    ActiveRecord::Base.verbose_query_logs = false
+    ActiveRecord.verbose_query_logs = false
   end
 
   def test_verbose_query_with_ignored_callstack
-    ActiveRecord::Base.verbose_query_logs = true
+    ActiveRecord.verbose_query_logs = true
 
     logger = TestDebugLogSubscriber.new
-    def logger.extract_query_source_location(*); nil; end
+    def logger.query_source_location; nil; end
 
     logger.sql(Event.new(0, sql: "hi mom!"))
     assert_equal 1, @logger.logged(:debug).size
     assert_no_match(/↳/, @logger.logged(:debug).last)
   ensure
-    ActiveRecord::Base.verbose_query_logs = false
+    ActiveRecord.verbose_query_logs = false
   end
 
   def test_verbose_query_logs_disabled_by_default
@@ -231,11 +247,13 @@ class LogSubscriberTest < ActiveRecord::TestCase
     assert_equal 0, @logger.logged(:debug).size
   end
 
-  def test_initializes_runtime
-    Thread.new { assert_equal 0, ActiveRecord::LogSubscriber.runtime }.join
-  end
+  if ActiveRecord::Base.lease_connection.prepared_statements
+    def test_where_in_binds_logging_include_attribute_names
+      Developer.where(id: [1, 2, 3, 4, 5]).load
+      wait
+      assert_match(%{["id", 1], ["id", 2], ["id", 3], ["id", 4], ["id", 5]}, @logger.logged(:debug).last)
+    end
 
-  if ActiveRecord::Base.connection.prepared_statements
     def test_binary_data_is_not_logged
       Binary.create(data: "some binary data")
       wait

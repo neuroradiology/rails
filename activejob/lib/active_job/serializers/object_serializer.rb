@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "singleton"
+
 module ActiveJob
   module Serializers
     # Base class for serializing and deserializing custom objects.
@@ -39,7 +41,7 @@ module ActiveJob
       end
 
       # Deserializes an argument from a JSON primitive type.
-      def deserialize(_argument)
+      def deserialize(json)
         raise NotImplementedError
       end
 

@@ -84,8 +84,8 @@ class ResponseTest < ActiveSupport::TestCase
     # the response can be built.
     status, headers, body = @response.to_a
     assert_equal 200, status
-    assert_equal({
-      "Content-Type" => "text/html; charset=utf-8"
+    assert_headers({
+      "content-type" => "text/html; charset=utf-8"
     }, headers)
 
     parts = []
@@ -122,9 +122,8 @@ class ResponseTest < ActiveSupport::TestCase
 
     status, headers, body = @response.to_a
     assert_equal 200, status
-    assert_equal({
-      "Content-Type" => "text/html; charset=utf-8"
-    }, headers)
+
+    assert_headers({ "content-type" => "text/html; charset=utf-8" }, headers)
 
     parts = []
     body.each { |part| parts << part }
@@ -147,13 +146,13 @@ class ResponseTest < ActiveSupport::TestCase
 
     status, headers, _ = @response.to_a
     assert_equal 200, status
-    assert_equal({
-      "Content-Type" => "text/html; charset=utf-8"
+    assert_headers({
+      "content-type" => "text/html; charset=utf-8"
     }, headers)
   end
 
   test "content length" do
-    [100, 101, 102, 204].each do |c|
+    [100, 101, 102, 103, 204].each do |c|
       @response = ActionDispatch::Response.new
       @response.status = c.to_s
       @response.set_header "Content-Length", "0"
@@ -163,7 +162,7 @@ class ResponseTest < ActiveSupport::TestCase
   end
 
   test "does not contain a message-body" do
-    [100, 101, 102, 204, 304].each do |c|
+    [100, 101, 102, 103, 204, 304].each do |c|
       @response = ActionDispatch::Response.new
       @response.status = c.to_s
       @response.body = "Body must not be included"
@@ -227,10 +226,12 @@ class ResponseTest < ActiveSupport::TestCase
     assert_equal "OK", @response.message
   end
 
+  include CookieAssertions
+
   test "cookies" do
     @response.set_cookie("user_name", value: "david", path: "/")
     _status, headers, _body = @response.to_a
-    assert_equal "user_name=david; path=/", headers["Set-Cookie"]
+    assert_set_cookie_header "user_name=david; path=/", headers["Set-Cookie"]
     assert_equal({ "user_name" => "david" }, @response.cookies)
   end
 
@@ -238,7 +239,7 @@ class ResponseTest < ActiveSupport::TestCase
     @response.set_cookie("user_name", value: "david", path: "/")
     @response.set_cookie("login", value: "foo&bar", path: "/", expires: Time.utc(2005, 10, 10, 5))
     _status, headers, _body = @response.to_a
-    assert_equal "user_name=david; path=/\nlogin=foo%26bar; path=/; expires=Mon, 10 Oct 2005 05:00:00 GMT", headers["Set-Cookie"]
+    assert_set_cookie_header "user_name=david; path=/\nlogin=foo%26bar; path=/; expires=Mon, 10 Oct 2005 05:00:00 GMT", headers["Set-Cookie"]
     assert_equal({ "login" => "foo&bar", "user_name" => "david" }, @response.cookies)
   end
 
@@ -295,6 +296,28 @@ class ResponseTest < ActiveSupport::TestCase
     assert_equal("application/xml; charset=utf-16", resp.headers["Content-Type"])
   end
 
+  test "respect no-store cache-control" do
+    resp = ActionDispatch::Response.new.tap { |response|
+      response.cache_control[:public] = true
+      response.cache_control[:no_store] = true
+      response.body = "Hello"
+    }
+    resp.to_a
+
+    assert_equal("no-store", resp.headers["Cache-Control"])
+  end
+
+  test "respect private, no-store cache-control" do
+    resp = ActionDispatch::Response.new.tap { |response|
+      response.cache_control[:private] = true
+      response.cache_control[:no_store] = true
+      response.body = "Hello"
+    }
+    resp.to_a
+
+    assert_equal("private, no-store", resp.headers["Cache-Control"])
+  end
+
   test "read content type with default charset utf-8" do
     resp = ActionDispatch::Response.new(200, "Content-Type" => "text/xml")
     assert_equal("utf-8", resp.charset)
@@ -311,14 +334,13 @@ class ResponseTest < ActiveSupport::TestCase
     end
   end
 
-  test "read x_frame_options, x_content_type_options, x_xss_protection, x_download_options and x_permitted_cross_domain_policies, referrer_policy" do
+  test "read x_frame_options, x_content_type_options, x_xss_protection, x_permitted_cross_domain_policies and referrer_policy" do
     original_default_headers = ActionDispatch::Response.default_headers
     begin
       ActionDispatch::Response.default_headers = {
         "X-Frame-Options" => "DENY",
         "X-Content-Type-Options" => "nosniff",
-        "X-XSS-Protection" => "1;",
-        "X-Download-Options" => "noopen",
+        "X-XSS-Protection" => "0",
         "X-Permitted-Cross-Domain-Policies" => "none",
         "Referrer-Policy" => "strict-origin-when-cross-origin"
       }
@@ -329,8 +351,7 @@ class ResponseTest < ActiveSupport::TestCase
 
       assert_equal("DENY", resp.headers["X-Frame-Options"])
       assert_equal("nosniff", resp.headers["X-Content-Type-Options"])
-      assert_equal("1;", resp.headers["X-XSS-Protection"])
-      assert_equal("noopen", resp.headers["X-Download-Options"])
+      assert_equal("0", resp.headers["X-XSS-Protection"])
       assert_equal("none", resp.headers["X-Permitted-Cross-Domain-Policies"])
       assert_equal("strict-origin-when-cross-origin", resp.headers["Referrer-Policy"])
     ensure
@@ -360,22 +381,24 @@ class ResponseTest < ActiveSupport::TestCase
     assert @response.respond_to?(:method_missing, true)
   end
 
+  include HeadersAssertions
+
   test "can be explicitly destructured into status, headers and an enumerable body" do
     response = ActionDispatch::Response.new(404, { "Content-Type" => "text/plain" }, ["Not Found"])
     response.request = ActionDispatch::Request.empty
     status, headers, body = *response
 
     assert_equal 404, status
-    assert_equal({ "Content-Type" => "text/plain" }, headers)
+    assert_headers({ "content-type" => "text/plain" }, headers)
     assert_equal ["Not Found"], body.each.to_a
   end
 
   test "[response.to_a].flatten does not recurse infinitely" do
     Timeout.timeout(1) do # use a timeout to prevent it stalling indefinitely
       status, headers, body = [@response.to_a].flatten
-      assert_equal @response.status, status
-      assert_equal @response.headers, headers
-      assert_equal @response.body, body.each.to_a.join
+      assert_equal 200, status
+      assert_equal headers, @response.headers
+      assert_nil body
     end
   end
 
@@ -385,10 +408,10 @@ class ResponseTest < ActiveSupport::TestCase
     env = Rack::MockRequest.env_for("/")
 
     _status, headers, _body = app.call(env)
-    assert_nil headers["Content-Length"]
+    assert_not_header "content-length", headers
 
     _status, headers, _body = Rack::ContentLength.new(app).call(env)
-    assert_equal "5", headers["Content-Length"]
+    assert_header "content-length", "5", headers
   end
 end
 
@@ -400,14 +423,12 @@ class ResponseHeadersTest < ActiveSupport::TestCase
 
   test "has_header?" do
     assert @response.has_header? "Foo"
-    assert_not @response.has_header? "foo"
-    assert_not @response.has_header? nil
+    assert @response.has_header? "foo"
   end
 
   test "get_header" do
     assert_equal "1", @response.get_header("Foo")
-    assert_nil @response.get_header("foo")
-    assert_nil @response.get_header(nil)
+    assert_equal "1", @response.get_header("foo")
   end
 
   test "set_header" do
@@ -421,23 +442,20 @@ class ResponseHeadersTest < ActiveSupport::TestCase
   end
 
   test "delete_header" do
-    assert_nil @response.delete_header(nil)
-
-    assert_nil @response.delete_header("foo")
-    assert @response.has_header?("Foo")
-
     assert_equal "1", @response.delete_header("Foo")
     assert_not @response.has_header?("Foo")
   end
 
+  include HeadersAssertions
+
   test "add_header" do
     # Add a value to an existing header
-    assert_equal "1,2", @response.add_header("Foo", "2")
-    assert_equal "1,2", @response.get_header("Foo")
+    assert_header_value "1,2", @response.add_header("Foo", "2")
+    assert_header_value "1,2", @response.get_header("Foo")
 
     # Add nil to an existing header
-    assert_equal "1,2", @response.add_header("Foo", nil)
-    assert_equal "1,2", @response.get_header("Foo")
+    assert_header_value "1,2", @response.add_header("Foo", nil)
+    assert_header_value "1,2", @response.get_header("Foo")
 
     # Add nil to a nonexistent header
     assert_nil @response.add_header("Bar", nil)
@@ -445,9 +463,9 @@ class ResponseHeadersTest < ActiveSupport::TestCase
     assert_nil @response.get_header("Bar")
 
     # Add a value to a nonexistent header
-    assert_equal "1", @response.add_header("Bar", "1")
+    assert_header_value "1", @response.add_header("Bar", "1")
     assert @response.has_header?("Bar")
-    assert_equal "1", @response.get_header("Bar")
+    assert_header_value "1", @response.get_header("Bar")
   end
 end
 
@@ -594,32 +612,39 @@ class ResponseIntegrationTest < ActionDispatch::IntegrationTest
     assert_equal("utf-16", @response.charset)
   end
 
-  test "`content type` returns header that excludes `charset` when specified `return_only_media_type_on_content_type`" do
-    original = ActionDispatch::Response.return_only_media_type_on_content_type
-    ActionDispatch::Response.return_only_media_type_on_content_type = true
-
+  test "response body with enumerator" do
     @app = lambda { |env|
-      if env["PATH_INFO"] == "/with_parameters"
-        [200, { "Content-Type" => "text/csv; header=present; charset=utf-16" }, [""]]
-      else
-        [200, { "Content-Type" => "text/csv; charset=utf-16" }, [""]]
-      end
+      [
+        200,
+        { "Content-Type" => "text/plain" },
+        Enumerator.new { |enumerator| 10.times { |n| enumerator << n.to_s } }
+      ]
     }
-
     get "/"
     assert_response :success
 
-    assert_deprecated do
-      assert_equal("text/csv", @response.content_type)
-    end
+    assert_equal("text/plain", @response.headers["Content-Type"])
+    assert_equal("text/plain", @response.content_type)
+    assert_equal("text/plain", @response.media_type)
+    assert_equal("utf-8", @response.charset)
+    assert_equal("0123456789", @response.body)
+  end
 
-    get "/with_parameters"
+  test "response body with lazy enumerator" do
+    @app = lambda { |env|
+      [
+        200,
+        { "Content-Type" => "text/plain" },
+        (0..10).lazy
+      ]
+    }
+    get "/"
     assert_response :success
 
-    assert_deprecated do
-      assert_equal("text/csv; header=present", @response.content_type)
-    end
-  ensure
-    ActionDispatch::Response.return_only_media_type_on_content_type = original
+    assert_equal("text/plain", @response.headers["Content-Type"])
+    assert_equal("text/plain", @response.content_type)
+    assert_equal("text/plain", @response.media_type)
+    assert_equal("utf-8", @response.charset)
+    assert_equal("012345678910", @response.body)
   end
 end

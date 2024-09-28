@@ -14,22 +14,34 @@ module ActiveRecord
         end
         super
         @klass = options[:class]
+        @klass = @klass.superclass if @klass.singleton_class?
       end
 
       def validate_each(record, attribute, value)
         finder_class = find_finder_class_for(record)
         value = map_enum_attribute(finder_class, attribute, value)
 
+        return if record.persisted? && !validation_needed?(finder_class, record, attribute)
+
         relation = build_relation(finder_class, attribute, value)
         if record.persisted?
           if finder_class.primary_key
-            relation = relation.where.not(finder_class.primary_key => record.id_in_database)
+            relation = relation.where.not(finder_class.primary_key => [record.id_in_database])
           else
             raise UnknownPrimaryKey.new(finder_class, "Cannot validate uniqueness for persisted record without primary key.")
           end
         end
         relation = scope_relation(record, relation)
-        relation = relation.merge(options[:conditions]) if options[:conditions]
+
+        if options[:conditions]
+          conditions = options[:conditions]
+
+          relation = if conditions.arity.zero?
+            relation.instance_exec(&conditions)
+          else
+            relation.instance_exec(record, &conditions)
+          end
+        end
 
         if relation.exists?
           error_options = options.except(:case_sensitive, :scope, :conditions)
@@ -42,31 +54,77 @@ module ActiveRecord
     private
       # The check for an existing value should be run from a class that
       # isn't abstract. This means working down from the current class
-      # (self), to the first non-abstract class. Since classes don't know
-      # their subclasses, we have to build the hierarchy between self and
-      # the record's class.
+      # (self), to the first non-abstract class.
       def find_finder_class_for(record)
-        class_hierarchy = [record.class]
-
-        while class_hierarchy.first != @klass
-          class_hierarchy.unshift(class_hierarchy.first.superclass)
+        current_class = record.class
+        found_class = nil
+        loop do
+          found_class = current_class unless current_class.abstract_class?
+          break if current_class == @klass
+          current_class = current_class.superclass
         end
 
-        class_hierarchy.detect { |klass| !klass.abstract_class? }
+        found_class
+      end
+
+      def validation_needed?(klass, record, attribute)
+        return true if options[:conditions] || options.key?(:case_sensitive)
+
+        scope = Array(options[:scope])
+        attributes = scope + [attribute]
+        attributes = resolve_attributes(record, attributes)
+
+        return true if attributes.any? { |attr| record.attribute_changed?(attr) ||
+                                                record.read_attribute(attr).nil? }
+
+        !covered_by_unique_index?(klass, record, attribute, scope)
+      end
+
+      def covered_by_unique_index?(klass, record, attribute, scope)
+        @covered ||= self.attributes.map(&:to_s).select do |attr|
+          attributes = scope + [attr]
+          attributes = resolve_attributes(record, attributes)
+
+          klass.schema_cache.indexes(klass.table_name).any? do |index|
+            index.unique &&
+              index.where.nil? &&
+              (Array(index.columns) - attributes).empty?
+          end
+        end
+
+        @covered.include?(attribute.to_s)
+      end
+
+      def resolve_attributes(record, attributes)
+        attributes.flat_map do |attribute|
+          reflection = record.class._reflect_on_association(attribute)
+
+          if reflection.nil?
+            attribute.to_s
+          elsif reflection.polymorphic?
+            [reflection.foreign_key, reflection.foreign_type]
+          else
+            reflection.foreign_key
+          end
+        end
       end
 
       def build_relation(klass, attribute, value)
         relation = klass.unscoped
-        comparison = relation.bind_attribute(attribute, value) do |attr, bind|
-          return relation.none! if bind.unboundable?
+        # TODO: Add case-sensitive / case-insensitive operators to Arel
+        # to no longer need to checkout a connection here.
+        comparison = klass.with_connection do |connection|
+          relation.bind_attribute(attribute, value) do |attr, bind|
+            return relation.none! if bind.unboundable?
 
-          if !options.key?(:case_sensitive) || bind.nil?
-            klass.connection.default_uniqueness_comparison(attr, bind, klass)
-          elsif options[:case_sensitive]
-            klass.connection.case_sensitive_comparison(attr, bind)
-          else
-            # will use SQL LOWER function before comparison, unless it detects a case insensitive collation
-            klass.connection.case_insensitive_comparison(attr, bind)
+            if !options.key?(:case_sensitive) || bind.nil?
+              connection.default_uniqueness_comparison(attr, bind)
+            elsif options[:case_sensitive]
+              connection.case_sensitive_comparison(attr, bind)
+            else
+              # will use SQL LOWER function before comparison, unless it detects a case insensitive collation
+              connection.case_insensitive_comparison(attr, bind)
+            end
           end
         end
 
@@ -78,7 +136,7 @@ module ActiveRecord
           scope_value = if record.class._reflect_on_association(scope_item)
             record.association(scope_item).reader
           else
-            record._read_attribute(scope_item)
+            record.read_attribute(scope_item)
           end
           relation = relation.where(scope_item => scope_value)
         end
@@ -126,6 +184,17 @@ module ActiveRecord
       #     validates_uniqueness_of :title, conditions: -> { where.not(status: 'archived') }
       #   end
       #
+      # To build conditions based on the record's state, define the conditions
+      # callable with a parameter, which will be the record itself. This
+      # example validates the title is unique for the year of publication:
+      #
+      #   class Article < ActiveRecord::Base
+      #     validates_uniqueness_of :title, conditions: ->(article) {
+      #       published_at = article.published_at
+      #       where(published_at: published_at.beginning_of_year..published_at.end_of_year)
+      #     }
+      #   end
+      #
       # When the record is created, a check is performed to make sure that no
       # record exists in the database with the given value for the specified
       # attribute (that maps to a column). When the record is updated,
@@ -141,19 +210,19 @@ module ActiveRecord
       #   <tt>WHERE</tt> SQL fragment to limit the uniqueness constraint lookup
       #   (e.g. <tt>conditions: -> { where(status: 'active') }</tt>).
       # * <tt>:case_sensitive</tt> - Looks for an exact match. Ignored by
-      #   non-text columns (+true+ by default).
+      #   non-text columns. The default behavior respects the default database collation.
       # * <tt>:allow_nil</tt> - If set to +true+, skips this validation if the
       #   attribute is +nil+ (default is +false+).
       # * <tt>:allow_blank</tt> - If set to +true+, skips this validation if the
       #   attribute is blank (default is +false+).
-      # * <tt>:if</tt> - Specifies a method, proc or string to call to determine
+      # * <tt>:if</tt> - Specifies a method, proc, or string to call to determine
       #   if the validation should occur (e.g. <tt>if: :allow_validation</tt>,
       #   or <tt>if: Proc.new { |user| user.signup_step > 2 }</tt>). The method,
       #   proc or string should return or evaluate to a +true+ or +false+ value.
-      # * <tt>:unless</tt> - Specifies a method, proc or string to call to
+      # * <tt>:unless</tt> - Specifies a method, proc, or string to call to
       #   determine if the validation should not occur (e.g. <tt>unless: :skip_validation</tt>,
       #   or <tt>unless: Proc.new { |user| user.signup_step <= 2 }</tt>). The
-      #   method, proc or string should return or evaluate to a +true+ or +false+
+      #   method, proc, or string should return or evaluate to a +true+ or +false+
       #   value.
       #
       # === Concurrency and integrity
@@ -201,7 +270,7 @@ module ActiveRecord
       # When the database catches such a duplicate insertion,
       # {ActiveRecord::Base#save}[rdoc-ref:Persistence#save] will raise an ActiveRecord::StatementInvalid
       # exception. You can either choose to let this error propagate (which
-      # will result in the default Rails exception page being shown), or you
+      # will result in the default \Rails exception page being shown), or you
       # can catch it and restart the transaction (e.g. by telling the user
       # that the title already exists, and asking them to re-enter the title).
       # This technique is also known as
@@ -216,6 +285,7 @@ module ActiveRecord
       # The following bundled adapters throw the ActiveRecord::RecordNotUnique exception:
       #
       # * ActiveRecord::ConnectionAdapters::Mysql2Adapter.
+      # * ActiveRecord::ConnectionAdapters::TrilogyAdapter.
       # * ActiveRecord::ConnectionAdapters::SQLite3Adapter.
       # * ActiveRecord::ConnectionAdapters::PostgreSQLAdapter.
       def validates_uniqueness_of(*attr_names)

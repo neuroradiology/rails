@@ -40,12 +40,12 @@ class ApiAppGeneratorTest < Rails::Generators::TestCase
     end
 
     assert_file "Gemfile" do |content|
-      assert_no_match(/gem 'sass-rails'/, content)
-      assert_no_match(/gem 'web-console'/, content)
-      assert_no_match(/gem 'capybara'/, content)
-      assert_no_match(/gem 'selenium-webdriver'/, content)
-      assert_match(/# gem 'jbuilder'/, content)
-      assert_match(/# gem 'rack-cors'/, content)
+      assert_no_match(/gem "sass-rails"/, content)
+      assert_no_match(/gem "web-console"/, content)
+      assert_no_match(/gem "capybara"/, content)
+      assert_no_match(/gem "selenium-webdriver"/, content)
+      assert_match(/# gem "jbuilder"/, content)
+      assert_match(/# gem "rack-cors"/, content)
     end
 
     assert_file "config/application.rb", /config\.api_only = true/
@@ -59,13 +59,20 @@ class ApiAppGeneratorTest < Rails::Generators::TestCase
     end
   end
 
+  def test_dockerfile
+    run_generator
+
+    assert_file "Dockerfile" do |content|
+      assert_no_match(/assets:precompile/, content)
+    end
+  end
+
   def test_generator_if_skip_action_cable_is_given
     run_generator [destination_root, "--api", "--skip-action-cable"]
     assert_file "config/application.rb", /#\s+require\s+["']action_cable\/engine["']/
     assert_no_file "config/cable.yml"
-    assert_no_file "app/channels"
     assert_file "Gemfile" do |content|
-      assert_no_match(/redis/, content)
+      assert_no_match(/"redis"/, content)
     end
   end
 
@@ -86,17 +93,27 @@ class ApiAppGeneratorTest < Rails::Generators::TestCase
     assert_no_directory "app/views"
   end
 
+  def test_generator_skip_css
+    run_generator [destination_root, "--api", "--css=tailwind"]
+
+    assert_file "Gemfile" do |content|
+      assert_no_match(%r/gem "tailwindcss-rails"/, content)
+    end
+
+    assert_no_file "app/views/layouts/application.html.erb" do |content|
+      assert_no_match(/tailwind/, content)
+    end
+  end
+
   def test_app_update_does_not_generate_unnecessary_config_files
     run_generator
 
     generator = Rails::Generators::AppGenerator.new ["rails"],
       { api: true, update: true }, { destination_root: destination_root, shell: @shell }
-    quietly { generator.send(:update_config_files) }
+    quietly { generator.update_config_files }
 
-    assert_no_file "config/initializers/cookies_serializer.rb"
     assert_no_file "config/initializers/assets.rb"
     assert_no_file "config/initializers/content_security_policy.rb"
-    assert_no_file "config/initializers/feature_policy.rb"
   end
 
   def test_app_update_does_not_generate_unnecessary_bin_files
@@ -104,26 +121,35 @@ class ApiAppGeneratorTest < Rails::Generators::TestCase
 
     generator = Rails::Generators::AppGenerator.new ["rails"],
       { api: true, update: true }, { destination_root: destination_root, shell: @shell }
-    quietly { generator.send(:update_bin_files) }
+    quietly { generator.update_bin_files }
+    pass
+  end
 
-    assert_no_file "bin/yarn"
+  def test_app_update_does_not_generate_public_files
+    run_generator
+    run_app_update
+
+    assert_no_file "public/406-unsupported-browser.html"
   end
 
   private
     def default_files
       %w(.gitignore
         .ruby-version
+        .dockerignore
         README.md
         Gemfile
         Rakefile
+        Dockerfile
         config.ru
-        app/channels
         app/controllers
         app/mailers
         app/models
         app/views/layouts
         app/views/layouts/mailer.html.erb
         app/views/layouts/mailer.text.erb
+        bin/dev
+        bin/docker-entrypoint
         bin/rails
         bin/rake
         bin/setup
@@ -136,19 +162,14 @@ class ApiAppGeneratorTest < Rails::Generators::TestCase
         config/environments/production.rb
         config/environments/test.rb
         config/initializers
-        config/initializers/application_controller_renderer.rb
-        config/initializers/backtrace_silencers.rb
         config/initializers/cors.rb
         config/initializers/filter_parameter_logging.rb
         config/initializers/inflections.rb
-        config/initializers/mime_types.rb
-        config/initializers/wrap_parameters.rb
         config/locales
         config/locales/en.yml
         config/puma.rb
         config/routes.rb
         config/credentials.yml.enc
-        config/spring.rb
         config/storage.yml
         db
         db/seeds.rb
@@ -170,19 +191,15 @@ class ApiAppGeneratorTest < Rails::Generators::TestCase
          app/views/layouts/application.html.erb
          bin/yarn
          config/initializers/assets.rb
-         config/initializers/cookies_serializer.rb
          config/initializers/content_security_policy.rb
-         config/initializers/feature_policy.rb
-         lib/assets
          test/helpers
-         tmp/cache/assets
+         public/400.html
          public/404.html
          public/422.html
+         public/406-unsupported-browser.html
          public/500.html
-         public/apple-touch-icon-precomposed.png
-         public/apple-touch-icon.png
-         public/favicon.ico
-         package.json
+         public/icon.png
+         public/icon.svg
       )
     end
 end

@@ -24,7 +24,7 @@ class NamedScopingTest < ActiveRecord::TestCase
   def test_found_items_are_cached
     all_posts = Topic.base
 
-    assert_queries(1) do
+    assert_queries_count(1) do
       all_posts.collect { true }
       all_posts.collect { true }
     end
@@ -50,7 +50,7 @@ class NamedScopingTest < ActiveRecord::TestCase
 
   def test_calling_merge_at_first_in_scope
     Topic.class_eval do
-      scope :calling_merge_at_first_in_scope, Proc.new { merge(Topic.unscoped.replied) }
+      scope :calling_merge_at_first_in_scope, Proc.new { merge(Topic.replied) }
     end
     assert_equal Topic.calling_merge_at_first_in_scope.to_a, Topic.replied.to_a
   end
@@ -62,6 +62,11 @@ class NamedScopingTest < ActiveRecord::TestCase
       scope :to,    Proc.new { where("written_on <= ?", Time.now) }
     end
     assert_equal klazz.to.since.to_a, klazz.since.to.to_a
+  end
+
+  def test_define_scope_for_reserved_words
+    assert Topic.true.all?(&:approved?), "all objects should be approved"
+    assert Topic.false.none?(&:approved?), "all objects should not be approved"
   end
 
   def test_scope_should_respond_to_own_methods_and_methods_of_the_proxy
@@ -107,10 +112,36 @@ class NamedScopingTest < ActiveRecord::TestCase
     assert_equal all_topics, Topic.written_before(nil)
   end
 
+  def test_positional_scope_method
+    stats = {}
+    topics = Topic.all.scope_stats(stats)
+
+    assert_equal topics.count, stats[:count]
+  end
+
+  def test_positional_klass_method
+    stats = {}
+    topics = Topic.all.klass_stats(stats)
+
+    assert_equal topics.count, stats[:count]
+  end
+
   def test_scope_with_object
     objects = Topic.with_object
     assert_operator objects.length, :>, 0
     assert objects.all?(&:approved?), "all objects should be approved"
+  end
+
+  def test_scope_with_kwargs
+    # Explicit true
+    topics = Topic.with_kwargs(approved: true)
+    assert_operator topics.length, :>, 0
+    assert topics.all?(&:approved?), "all objects should be approved"
+
+    # No arguments
+    topics = Topic.with_kwargs()
+    assert_operator topics.length, :>, 0
+    assert topics.none?(&:approved?), "all objects should not be approved"
   end
 
   def test_has_many_associations_have_access_to_scopes
@@ -163,7 +194,7 @@ class NamedScopingTest < ActiveRecord::TestCase
       e = assert_raises ArgumentError do
         Class.new(Post).class_eval { scope name, -> { where(approved: true) } }
       end
-      assert_match(/You tried to define a scope named \"#{name}\" on the model/, e.message)
+      assert_match(/You tried to define a scope named "#{name}" on the model/, e.message)
     end
   end
 
@@ -196,7 +227,7 @@ class NamedScopingTest < ActiveRecord::TestCase
 
   def test_empty_should_not_load_results
     topics = Topic.base
-    assert_queries(2) do
+    assert_queries_count(2) do
       topics.empty?  # use count query
       topics.load    # force load
       topics.empty?  # use loaded (no query)
@@ -205,7 +236,7 @@ class NamedScopingTest < ActiveRecord::TestCase
 
   def test_any_should_not_load_results
     topics = Topic.base
-    assert_queries(2) do
+    assert_queries_count(2) do
       topics.any?    # use count query
       topics.load    # force load
       topics.any?    # use loaded (no query)
@@ -214,7 +245,7 @@ class NamedScopingTest < ActiveRecord::TestCase
 
   def test_any_should_call_proxy_found_if_using_a_block
     topics = Topic.base
-    assert_queries(1) do
+    assert_queries_count(1) do
       assert_not_called(topics, :empty?) do
         topics.any? { true }
       end
@@ -224,7 +255,7 @@ class NamedScopingTest < ActiveRecord::TestCase
   def test_any_should_not_fire_query_if_scope_loaded
     topics = Topic.base
     topics.load # force load
-    assert_no_queries { assert topics.any? }
+    assert_no_queries { assert_predicate topics, :any? }
   end
 
   def test_model_class_should_respond_to_any
@@ -235,7 +266,7 @@ class NamedScopingTest < ActiveRecord::TestCase
 
   def test_many_should_not_load_results
     topics = Topic.base
-    assert_queries(2) do
+    assert_queries_count(2) do
       topics.many?   # use count query
       topics.load    # force load
       topics.many?   # use loaded (no query)
@@ -244,7 +275,7 @@ class NamedScopingTest < ActiveRecord::TestCase
 
   def test_many_should_call_proxy_found_if_using_a_block
     topics = Topic.base
-    assert_queries(1) do
+    assert_queries_count(1) do
       assert_not_called(topics, :size) do
         topics.many? { true }
       end
@@ -254,7 +285,7 @@ class NamedScopingTest < ActiveRecord::TestCase
   def test_many_should_not_fire_query_if_scope_loaded
     topics = Topic.base
     topics.load # force load
-    assert_no_queries { assert topics.many? }
+    assert_no_queries { assert_predicate topics, :many? }
   end
 
   def test_many_should_return_false_if_none_or_one
@@ -332,7 +363,6 @@ class NamedScopingTest < ActiveRecord::TestCase
       :protected,
       :private,
       :name,
-      :parent,
       :superclass
     ]
 
@@ -349,12 +379,12 @@ class NamedScopingTest < ActiveRecord::TestCase
       e = assert_raises(ArgumentError, "scope `#{name}` should not be allowed") do
         klass.class_eval { scope name, -> { where(approved: true) } }
       end
-      assert_match(/You tried to define a scope named \"#{name}\" on the model/, e.message)
+      assert_match(/You tried to define a scope named "#{name}" on the model/, e.message)
 
       e = assert_raises(ArgumentError, "scope `#{name}` should not be allowed") do
         subklass.class_eval { scope name, -> { where(approved: true) } }
       end
-      assert_match(/You tried to define a scope named \"#{name}\" on the model/, e.message)
+      assert_match(/You tried to define a scope named "#{name}" on the model/, e.message)
     end
 
     non_conflicts.each do |name|
@@ -376,11 +406,11 @@ class NamedScopingTest < ActiveRecord::TestCase
   def test_spaces_in_scope_names
     klass = Class.new(ActiveRecord::Base) do
       self.table_name = "topics"
-      scope :"title containing space", -> { where("title LIKE '% %'") }
+      scope :"title containing space", ->(space: " ") { where("title LIKE '%#{space}%'") }
       scope :approved, -> { where(approved: true) }
     end
-    assert_equal klass.send(:"title containing space"), klass.where("title LIKE '% %'")
-    assert_equal klass.approved.send(:"title containing space"), klass.approved.where("title LIKE '% %'")
+    assert_equal klass.where("title LIKE '% %'"), klass.public_send(:"title containing space", space: " ")
+    assert_equal klass.approved.where("title LIKE '% %'"), klass.approved.public_send(:"title containing space", space: " ")
   end
 
   def test_find_all_should_behave_like_select
@@ -397,8 +427,8 @@ class NamedScopingTest < ActiveRecord::TestCase
 
   def test_size_should_use_count_when_results_are_not_loaded
     topics = Topic.base
-    assert_queries(1) do
-      assert_sql(/COUNT/i) { topics.size }
+    assert_queries_count(1) do
+      assert_queries_match(/COUNT/i) { topics.size }
     end
   end
 
@@ -448,9 +478,12 @@ class NamedScopingTest < ActiveRecord::TestCase
   end
 
   def test_class_method_in_scope
-    assert_deprecated do
-      assert_equal [topics(:second)], topics(:first).approved_replies.ordered
-    end
+    assert_equal topics(:second, :fourth), topics(:first).approved_replies.ordered
+  end
+
+  def test_chaining_doesnt_leak_conditions_to_another_scopes
+    expected = Topic.where(approved: false).where(id: Topic.children.select(:parent_id))
+    assert_equal expected.to_a, Topic.rejected.has_children.to_a
   end
 
   def test_nested_scoping
@@ -461,13 +494,13 @@ class NamedScopingTest < ActiveRecord::TestCase
   def test_scopes_batch_finders
     assert_equal 4, Topic.approved.count
 
-    assert_queries(5) do
-      Topic.approved.find_each(batch_size: 1) { |t| assert t.approved? }
+    assert_queries_count(5) do
+      Topic.approved.find_each(batch_size: 1) { |t| assert_predicate t, :approved? }
     end
 
-    assert_queries(3) do
+    assert_queries_count(3) do
       Topic.approved.find_in_batches(batch_size: 2) do |group|
-        group.each { |t| assert t.approved? }
+        group.each { |t| assert_predicate t, :approved? }
       end
     end
   end
@@ -475,26 +508,6 @@ class NamedScopingTest < ActiveRecord::TestCase
   def test_table_names_for_chaining_scopes_with_and_without_table_name_included
     assert_nothing_raised do
       Comment.for_first_post.for_first_author.to_a
-    end
-  end
-
-  def test_scopes_with_reserved_names
-    class << Topic
-      def public_method; end
-      public :public_method
-
-      def protected_method; end
-      protected :protected_method
-
-      def private_method; end
-      private :private_method
-    end
-
-    [:public_method, :protected_method, :private_method].each do |reserved_method|
-      assert Topic.respond_to?(reserved_method, true)
-      assert_called(ActiveRecord::Base.logger, :warn) do
-        silence_warnings { Topic.scope(reserved_method, -> { }) }
-      end
     end
   end
 
@@ -514,19 +527,19 @@ class NamedScopingTest < ActiveRecord::TestCase
   end
 
   def test_nested_scopes_queries_size
-    assert_queries(1) do
+    assert_queries_count(1) do
       Topic.approved.by_lifo.replied.written_before(Time.now).to_a
     end
   end
 
   # Note: these next two are kinda odd because they are essentially just testing that the
-  # query cache works as it should, but they are here for legacy reasons as they was previously
+  # query cache works as it should, but they are here for legacy reasons as there was previously
   # a separate cache on association proxies, and these show that that is not necessary.
   def test_scopes_are_cached_on_associations
     post = posts(:welcome)
 
     Post.cache do
-      assert_queries(1) { post.comments.containing_the_letter_e.to_a }
+      assert_queries_count(1) { post.comments.containing_the_letter_e.to_a }
       assert_no_queries { post.comments.containing_the_letter_e.to_a }
     end
   end
@@ -535,10 +548,10 @@ class NamedScopingTest < ActiveRecord::TestCase
     post = posts(:welcome)
 
     Post.cache do
-      one = assert_queries(1) { post.comments.limit_by(1).to_a }
+      one = assert_queries_count(1) { post.comments.limit_by(1).to_a }
       assert_equal 1, one.size
 
-      two = assert_queries(1) { post.comments.limit_by(2).to_a }
+      two = assert_queries_count(1) { post.comments.limit_by(2).to_a }
       assert_equal 2, two.size
 
       assert_no_queries { post.comments.limit_by(1).to_a }
@@ -559,8 +572,8 @@ class NamedScopingTest < ActiveRecord::TestCase
 
     [:destroy_all, :reset, :delete_all].each do |method|
       before = post.comments.containing_the_letter_e
-      post.association(:comments).send(method)
-      assert before.object_id != post.comments.containing_the_letter_e.object_id, "CollectionAssociation##{method} should reset the named scopes cache"
+      post.association(:comments).public_send(method)
+      assert_not_same before, post.comments.containing_the_letter_e, "CollectionAssociation##{method} should reset the named scopes cache"
     end
   end
 
@@ -580,7 +593,7 @@ class NamedScopingTest < ActiveRecord::TestCase
   end
 
   def test_subclass_merges_scopes_properly
-    assert_equal 1, SpecialComment.where(body: "go crazy").created.count
+    assert_equal 1, SpecialComment.where(body: "go wild").created.count
   end
 
   def test_model_class_should_respond_to_extending
@@ -608,8 +621,8 @@ class NamedScopingTest < ActiveRecord::TestCase
       scope :including_annotate_in_scope, Proc.new { annotate("from-scope") }
     end
 
-    assert_sql(%r{/\* from-scope \*/}) do
-      assert Topic.including_annotate_in_scope.to_a, Topic.all.to_a
+    assert_queries_match(%r{/\* from-scope \*/}) do
+      assert_equal Topic.including_annotate_in_scope.to_a, Topic.all.to_a
     end
   end
 end

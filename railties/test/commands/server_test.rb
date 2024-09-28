@@ -5,7 +5,7 @@ require "env_helpers"
 require "rails/command"
 require "rails/commands/server/server_command"
 
-class Rails::Command::ServerCommandTest < ActiveSupport::TestCase
+class Rails::Command::ServerTest < ActiveSupport::TestCase
   include EnvHelpers
 
   def test_environment_with_server_option
@@ -35,21 +35,31 @@ class Rails::Command::ServerCommandTest < ActiveSupport::TestCase
   end
 
   def test_using_server_mistype
-    assert_match(/Could not find server "tin". Maybe you meant "thin"?/, run_command("--using", "tin"))
+    output = run_command("--using", "tin")
+    assert_match "Could not find server 'tin'", output
+    assert_match "Did you mean?  thin", output
   end
 
   def test_using_server_mistype_without_suggestion
     output = run_command("--using", "t")
-    assert_match(/Could not find server "t"/, output)
-    assert_no_match(/Maybe you meant/, output)
-  end
-
-  def test_using_positional_argument_deprecation
-    assert_match(/DEPRECATION WARNING/, run_command("tin"))
+    assert_match "Could not find server 't'", output
+    assert_no_match "Did you mean", output
   end
 
   def test_using_known_server_that_isnt_in_the_gemfile
     assert_match(/Could not load server "unicorn". Maybe you need to the add it to the Gemfile/, run_command("-u", "unicorn"))
+  end
+
+  def test_gem_not_suggested_when_name_not_same_as_handler
+    build_app
+
+    ["fastcgi", "lsws"].each do |server|
+      output = rails "server", "-u", server
+      assert_match(/Could not find server '#{server}'./, output)
+      assert_no_match("Gemfile", output)
+    end
+  ensure
+    teardown_app
   end
 
   def test_daemon_with_option
@@ -97,15 +107,6 @@ class Rails::Command::ServerCommandTest < ActiveSupport::TestCase
     switch_env "PORT", "1234" do
       options = parse_arguments
       assert_equal 1234, options[:Port]
-    end
-  end
-
-  def test_environment_with_host
-    switch_env "HOST", "1.2.3.4" do
-      assert_deprecated do
-        options = parse_arguments
-        assert_equal "1.2.3.4", options[:Host]
-      end
     end
   end
 
@@ -305,6 +306,12 @@ class Rails::Command::ServerCommandTest < ActiveSupport::TestCase
     assert_equal "http://127.0.0.1:4567", server.served_url
   end
 
+  def test_served_url_when_server_prints_it
+    args = %w(-u puma -b 127.0.0.1 -p 4567)
+    server = Rails::Server.new(parse_arguments(args))
+    assert_nil server.served_url
+  end
+
   private
     def run_command(*args)
       build_app
@@ -314,8 +321,6 @@ class Rails::Command::ServerCommandTest < ActiveSupport::TestCase
     end
 
     def parse_arguments(args = [])
-      command = Rails::Command::ServerCommand.new([], args)
-      command.send(:extract_environment_option_from_argument)
-      command.server_options
+      Rails::Command::ServerCommand.new([], args).server_options
     end
 end

@@ -28,11 +28,11 @@ class FormTagHelperTest < ActionView::TestCase
 
     (+"").tap do |txt|
       if enforce_utf8
-        txt << %{<input name="utf8" type="hidden" value="&#x2713;" />}
+        txt << %{<input name="utf8" type="hidden" value="&#x2713;" autocomplete="off" />}
       end
 
       if method && !%w(get post).include?(method.to_s)
-        txt << %{<input name="_method" type="hidden" value="#{method}" />}
+        txt << %{<input name="_method" type="hidden" value="#{method}" autocomplete="off" />}
       end
     end
   end
@@ -42,7 +42,7 @@ class FormTagHelperTest < ActionView::TestCase
 
     method = method.to_s == "get" ? "get" : "post"
 
-    txt =  +%{<form accept-charset="UTF-8" action="#{action}"}
+    txt =  +%{<form accept-charset="UTF-8"} + (action ? %{ action="#{action}"} : "")
     txt << %{ enctype="multipart/form-data"} if enctype
     txt << %{ data-remote="true"} if remote
     txt << %{ class="#{html_class}"} if html_class
@@ -70,26 +70,56 @@ class FormTagHelperTest < ActionView::TestCase
 
   VALID_HTML_ID = /^[A-Za-z][-_:.A-Za-z0-9]*$/ # see http://www.w3.org/TR/html4/types.html#type-name
 
-  def test_check_box_tag
-    actual = check_box_tag "admin"
+  def test_checkbox_tag
+    actual = checkbox_tag "admin"
     expected = %(<input id="admin" name="admin" type="checkbox" value="1" />)
     assert_dom_equal expected, actual
   end
 
-  def test_check_box_tag_disabled
-    actual = check_box_tag "admin", "1", false, disabled: true
+  def test_checkbox_tag_disabled
+    actual = checkbox_tag "admin", "1", false, disabled: true
     expected = %(<input id="admin" disabled="disabled" name="admin" type="checkbox" value="1" />)
     assert_dom_equal expected, actual
   end
 
-  def test_check_box_tag_default_checked
-    actual = check_box_tag "admin", "1", true
+  def test_checkbox_tag_default_checked
+    actual = checkbox_tag "admin", "1", true
     expected = %(<input id="admin" checked="checked" name="admin" type="checkbox" value="1" />)
     assert_dom_equal expected, actual
   end
 
-  def test_check_box_tag_id_sanitized
-    label_elem = root_elem(check_box_tag("project[2][admin]"))
+  def test_checkbox_tag_checked_kwarg_true
+    actual = checkbox_tag "admin", "yes", checked: true
+    expected = %(<input id="admin" checked="checked" name="admin" type="checkbox" value="yes" />)
+    assert_dom_equal expected, actual
+  end
+
+  def test_checkbox_tag_checked_kwarg_false
+    actual = checkbox_tag "admin", "1", checked: false
+    expected = %(<input id="admin" name="admin" type="checkbox" value="1" />)
+    assert_dom_equal expected, actual
+  end
+
+  def test_checkbox_tag_checked_kwarg_false_and_disabled
+    actual = checkbox_tag "admin", "1", checked: false, disabled: true
+    expected = %(<input id="admin" name="admin" type="checkbox" value="1" disabled="disabled" />)
+    assert_dom_equal expected, actual
+  end
+
+  def test_checkbox_tag_checked_kwarg_true_value_argument_skipped
+    actual = checkbox_tag "admin", checked: true
+    expected = %(<input id="admin" checked="checked" name="admin" type="checkbox" value="1" />)
+    assert_dom_equal expected, actual
+  end
+
+  def test_checkbox_tag_value_kwarg
+    actual = checkbox_tag "admin", value: "0", checked: true
+    expected = %(<input id="admin" name="admin" type="checkbox" value="0" checked="checked" />)
+    assert_dom_equal expected, actual
+  end
+
+  def test_checkbox_tag_id_sanitized
+    label_elem = root_elem(checkbox_tag("project[2][admin]"))
     assert_match VALID_HTML_ID, label_elem["id"]
   end
 
@@ -135,6 +165,20 @@ class FormTagHelperTest < ActionView::TestCase
     actual = form_tag({}, { remote: false })
 
     expected = whole_form
+    assert_dom_equal expected, actual
+  end
+
+  def test_form_tag_with_false_url_for_options
+    actual = form_tag(false)
+
+    expected = whole_form(false)
+    assert_dom_equal expected, actual
+  end
+
+  def test_form_tag_with_false_action
+    actual = form_tag({}, action: false)
+
+    expected = whole_form(false)
     assert_dom_equal expected, actual
   end
 
@@ -187,9 +231,99 @@ class FormTagHelperTest < ActionView::TestCase
     assert_dom_equal expected, output_buffer
   end
 
+  def test_field_id_without_suffixes_or_index
+    value = field_id(:post, :title)
+
+    assert_equal "post_title", value
+  end
+
+  def test_field_id_with_suffixes
+    value = field_id(:post, :title, :error)
+
+    assert_equal "post_title_error", value
+  end
+
+  def test_field_id_with_suffixes_and_index
+    value = field_id(:post, :title, :error, index: 1)
+
+    assert_equal "post_1_title_error", value
+  end
+
+  def test_field_id_with_nested_object_name
+    value = field_id("post[author]", :name)
+
+    assert_equal "post_author_name", value
+  end
+
+  def test_field_name_with_nil_object_name
+    value = field_name(nil, :title)
+
+    assert_equal "title", value
+  end
+
+  def test_field_name_with_blank_object_name
+    value = field_name("", :title)
+
+    assert_equal "title", value
+  end
+
+  def test_field_name_without_object_name_and_multiple
+    value = field_name("", :title, multiple: true)
+
+    assert_equal "title[]", value
+  end
+
+  def test_field_name_without_method_names_or_multiple_or_index
+    value = field_name(:post, :title)
+
+    assert_equal "post[title]", value
+  end
+
+  def test_field_name_without_method_names_and_multiple
+    value = field_name(:post, :title, multiple: true)
+
+    assert_equal "post[title][]", value
+  end
+
+  def test_field_name_without_method_names_and_index
+    value = field_name(:post, :title, index: 1)
+
+    assert_equal "post[1][title]", value
+  end
+
+  def test_field_name_without_method_names_and_index_and_multiple
+    value = field_name(:post, :title, index: 1, multiple: true)
+
+    assert_equal "post[1][title][]", value
+  end
+
+  def test_field_name_with_method_names
+    value = field_name(:post, :title, :subtitle)
+
+    assert_equal "post[title][subtitle]", value
+  end
+
+  def test_field_name_with_method_names_and_index
+    value = field_name(:post, :title, :subtitle, index: 1)
+
+    assert_equal "post[1][title][subtitle]", value
+  end
+
+  def test_field_name_with_method_names_and_multiple
+    value = field_name(:post, :title, :subtitle, multiple: true)
+
+    assert_equal "post[title][subtitle][]", value
+  end
+
+  def test_field_name_with_method_names_and_multiple_and_index
+    value = field_name(:post, :title, :subtitle, index: 1, multiple: true)
+
+    assert_equal "post[1][title][subtitle][]", value
+  end
+
   def test_hidden_field_tag
     actual = hidden_field_tag "id", 3
-    expected = %(<input id="id" name="id" type="hidden" value="3" />)
+    expected = %(<input id="id" name="id" type="hidden" value="3" autocomplete="off" />)
     assert_dom_equal expected, actual
   end
 
@@ -269,6 +403,30 @@ class FormTagHelperTest < ActionView::TestCase
 
     actual = radio_button_tag("ctrlname", "apache2.2")
     expected = %(<input id="ctrlname_apache2.2" name="ctrlname" type="radio" value="apache2.2" />)
+    assert_dom_equal expected, actual
+
+    actual = radio_button_tag "people", "david", true
+    expected = %(<input id="people_david" name="people" type="radio" value="david" checked="checked" />)
+    assert_dom_equal expected, actual
+
+    actual = radio_button_tag "people", "david", false
+    expected = %(<input id="people_david" name="people" type="radio" value="david" />)
+    assert_dom_equal expected, actual
+
+    actual = radio_button_tag "people", "david", false, disabled: true
+    expected = %(<input id="people_david" name="people" type="radio" value="david" disabled="disabled" />)
+    assert_dom_equal expected, actual
+
+    actual = radio_button_tag "people", "david", checked: true
+    expected = %(<input id="people_david" name="people" type="radio" value="david" checked="checked" />)
+    assert_dom_equal expected, actual
+
+    actual = radio_button_tag "people", "david", checked: false
+    expected = %(<input id="people_david" name="people" type="radio" value="david" />)
+    assert_dom_equal expected, actual
+
+    actual = radio_button_tag "people", "david", checked: false, disabled: true
+    expected = %(<input id="people_david" name="people" type="radio" value="david" disabled="disabled" />)
     assert_dom_equal expected, actual
   end
 
@@ -350,43 +508,43 @@ class FormTagHelperTest < ActionView::TestCase
     assert_dom_equal expected, actual
   end
 
-  def test_text_area_tag_size_string
-    actual = text_area_tag "body", "hello world", "size" => "20x40"
+  def test_textarea_tag_size_string
+    actual = textarea_tag "body", "hello world", "size" => "20x40"
     expected = %(<textarea cols="20" id="body" name="body" rows="40">\nhello world</textarea>)
     assert_dom_equal expected, actual
   end
 
-  def test_text_area_tag_size_symbol
-    actual = text_area_tag "body", "hello world", size: "20x40"
+  def test_textarea_tag_size_symbol
+    actual = textarea_tag "body", "hello world", size: "20x40"
     expected = %(<textarea cols="20" id="body" name="body" rows="40">\nhello world</textarea>)
     assert_dom_equal expected, actual
   end
 
-  def test_text_area_tag_should_disregard_size_if_its_given_as_an_integer
-    actual = text_area_tag "body", "hello world", size: 20
+  def test_textarea_tag_should_disregard_size_if_its_given_as_an_integer
+    actual = textarea_tag "body", "hello world", size: 20
     expected = %(<textarea id="body" name="body">\nhello world</textarea>)
     assert_dom_equal expected, actual
   end
 
-  def test_text_area_tag_id_sanitized
-    input_elem = root_elem(text_area_tag("item[][description]"))
+  def test_textarea_tag_id_sanitized
+    input_elem = root_elem(textarea_tag("item[][description]"))
     assert_match VALID_HTML_ID, input_elem["id"]
   end
 
-  def test_text_area_tag_escape_content
-    actual = text_area_tag "body", "<b>hello world</b>", size: "20x40"
+  def test_textarea_tag_escape_content
+    actual = textarea_tag "body", "<b>hello world</b>", size: "20x40"
     expected = %(<textarea cols="20" id="body" name="body" rows="40">\n&lt;b&gt;hello world&lt;/b&gt;</textarea>)
     assert_dom_equal expected, actual
   end
 
-  def test_text_area_tag_unescaped_content
-    actual = text_area_tag "body", "<b>hello world</b>", size: "20x40", escape: false
+  def test_textarea_tag_unescaped_content
+    actual = textarea_tag "body", "<b>hello world</b>", size: "20x40", escape: false
     expected = %(<textarea cols="20" id="body" name="body" rows="40">\n<b>hello world</b></textarea>)
     assert_dom_equal expected, actual
   end
 
-  def test_text_area_tag_unescaped_nil_content
-    actual = text_area_tag "body", nil, escape: false
+  def test_textarea_tag_unescaped_nil_content
+    actual = textarea_tag "body", nil, escape: false
     expected = %(<textarea id="body" name="body">\n</textarea>)
     assert_dom_equal expected, actual
   end
@@ -500,8 +658,8 @@ class FormTagHelperTest < ActionView::TestCase
   end
 
   def test_boolean_options
-    assert_dom_equal %(<input checked="checked" disabled="disabled" id="admin" name="admin" readonly="readonly" type="checkbox" value="1" />), check_box_tag("admin", 1, true, "disabled" => true, :readonly => "yes")
-    assert_dom_equal %(<input checked="checked" id="admin" name="admin" type="checkbox" value="1" />), check_box_tag("admin", 1, true, disabled: false, readonly: nil)
+    assert_dom_equal %(<input checked="checked" disabled="disabled" id="admin" name="admin" readonly="readonly" type="checkbox" value="1" />), checkbox_tag("admin", 1, true, "disabled" => true, :readonly => "yes")
+    assert_dom_equal %(<input checked="checked" id="admin" name="admin" type="checkbox" value="1" />), checkbox_tag("admin", 1, true, disabled: false, readonly: nil)
     assert_dom_equal %(<input type="checkbox" />), tag(:input, type: "checkbox", checked: false)
     assert_dom_equal %(<select id="people" multiple="multiple" name="people[]"><option>david</option></select>), select_tag("people", raw("<option>david</option>"), multiple: true)
     assert_dom_equal %(<select id="people_" multiple="multiple" name="people[]"><option>david</option></select>), select_tag("people[]", raw("<option>david</option>"), multiple: true)
@@ -533,6 +691,16 @@ class FormTagHelperTest < ActionView::TestCase
     assert_dom_equal(
       %(<input name='commit' type="submit" value="Save" />),
       submit_tag("Save")
+    )
+  ensure
+    ActionView::Base.automatically_disable_submit_tag = true
+  end
+
+  def test_empty_submit_tag_with_opt_out_and_explicit_disabling
+    ActionView::Base.automatically_disable_submit_tag = false
+    assert_dom_equal(
+      %(<input name='commit' type="submit" value="Save" />),
+      submit_tag("Save", data: { disable_with: false })
     )
   ensure
     ActionView::Base.automatically_disable_submit_tag = true
@@ -757,6 +925,11 @@ class FormTagHelperTest < ActionView::TestCase
     expected = %(<fieldset class="format">Hello world!</fieldset>)
     assert_dom_equal expected, output_buffer
 
+    output_buffer = render_erb("<%= fieldset_tag('', :class => 'format') do %>Hello world!<% end %>")
+
+    expected = %(<fieldset class="format">Hello world!</fieldset>)
+    assert_dom_equal expected, output_buffer
+
     output_buffer = render_erb("<%= field_set_tag %>")
 
     expected = %(<fieldset></fieldset>)
@@ -768,9 +941,9 @@ class FormTagHelperTest < ActionView::TestCase
     assert_dom_equal expected, output_buffer
   end
 
-  def test_text_area_tag_options_symbolize_keys_side_effects
+  def test_textarea_tag_options_symbolize_keys_side_effects
     options = { option: "random_option" }
-    text_area_tag "body", "hello world", options
+    textarea_tag "body", "hello world", options
     assert_equal({ option: "random_option" }, options)
   end
 
@@ -798,13 +971,27 @@ class FormTagHelperTest < ActionView::TestCase
     assert_equal({ option: "random_option" }, options)
   end
 
+  def test_content_exfiltration_prevention
+    with_prepend_content_exfiltration_prevention(true) do
+      actual = form_tag
+      expected = %(<!-- '"` --><!-- </textarea></xmp> --></option></form>#{whole_form})
+      assert_dom_equal expected, actual
+    end
+  end
+
+  def test_form_with_content_exfiltration_prevention_is_html_safe
+    with_prepend_content_exfiltration_prevention(true) do
+      assert_equal true, form_tag.html_safe?
+    end
+  end
+
   def protect_against_forgery?
     false
   end
 
   private
     def root_elem(rendered_content)
-      Nokogiri::HTML::DocumentFragment.parse(rendered_content).children.first # extract from nodeset
+      Rails::Dom::Testing.html_document_fragment.parse(rendered_content).children.first # extract from nodeset
     end
 
     def with_default_enforce_utf8(value)
@@ -814,5 +1001,14 @@ class FormTagHelperTest < ActionView::TestCase
       yield
     ensure
       ActionView::Helpers::FormTagHelper.default_enforce_utf8 = old_value
+    end
+
+    def with_prepend_content_exfiltration_prevention(value)
+      old_value = ActionView::Helpers::ContentExfiltrationPreventionHelper.prepend_content_exfiltration_prevention
+      ActionView::Helpers::ContentExfiltrationPreventionHelper.prepend_content_exfiltration_prevention = value
+
+      yield
+    ensure
+      ActionView::Helpers::ContentExfiltrationPreventionHelper.prepend_content_exfiltration_prevention = old_value
     end
 end

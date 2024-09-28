@@ -2,7 +2,6 @@
 
 require "abstract_unit"
 require "active_support/core_ext/object/with_options"
-require "active_support/core_ext/array/extract_options"
 
 class AdminController < ResourcesController; end
 class MessagesController < ResourcesController; end
@@ -782,11 +781,11 @@ class ResourcesTest < ActionController::TestCase
     with_routing do |set|
       set.draw do
         resources :products do
-           resources :product_reviews, path: "reviews", controller: "messages"
-         end
+          resources :product_reviews, path: "reviews", controller: "messages"
+        end
         resources :tutors do
-           resources :tutor_reviews, path: "reviews", controller: "comments"
-         end
+          resources :tutor_reviews, path: "reviews", controller: "comments"
+        end
       end
 
       assert_simply_restful_for :product_reviews, controller: "messages", as: "reviews", name_prefix: "product_", path_prefix: "products/1/", options: { product_id: "1" }
@@ -1124,7 +1123,7 @@ class ResourcesTest < ActionController::TestCase
               if collection_methods
                 collection do
                   collection_methods.each do |name, method|
-                    send(method, name)
+                    public_send(method, name)
                   end
                 end
               end
@@ -1132,7 +1131,7 @@ class ResourcesTest < ActionController::TestCase
               if member_methods
                 member do
                   member_methods.each do |name, method|
-                    send(method, name)
+                    public_send(method, name)
                   end
                 end
               end
@@ -1218,7 +1217,11 @@ class ResourcesTest < ActionController::TestCase
       assert_recognizes(options[:shallow_options].merge(action: "update",  id: "1", format: "xml"), path: "#{member_path}.xml",       method: :put)
       assert_recognizes(options[:shallow_options].merge(action: "destroy", id: "1", format: "xml"), path: "#{member_path}.xml",       method: :delete)
 
-      yield route_options if block_given?
+      if block_given?
+        _assert_nothing_raised_or_warn("assert_restful_routes_for") do
+          yield route_options
+        end
+      end
     end
 
     # test named routes like foo_path and foos_path map to the correct options.
@@ -1267,7 +1270,11 @@ class ResourcesTest < ActionController::TestCase
       assert_named_route "#{shallow_path}/1/#{edit_action}", "edit_#{shallow_prefix}#{singular_name}_path", options[:shallow_options].merge(id: "1")
       assert_named_route "#{shallow_path}/1/#{edit_action}.xml", "edit_#{shallow_prefix}#{singular_name}_path", options[:shallow_options].merge(id: "1", format: "xml")
 
-      yield route_options if block_given?
+      if block_given?
+        _assert_nothing_raised_or_warn("assert_restful_named_routes_for") do
+          yield route_options
+        end
+      end
     end
 
     def assert_singleton_routes_for(singleton_name, options = {})
@@ -1302,7 +1309,11 @@ class ResourcesTest < ActionController::TestCase
       assert_recognizes(route_options.merge(action: "update",  format: "xml"), path: "#{full_path}.xml",  method: :put)
       assert_recognizes(route_options.merge(action: "destroy", format: "xml"), path: "#{full_path}.xml",  method: :delete)
 
-      yield route_options if block_given?
+      if block_given?
+        _assert_nothing_raised_or_warn("assert_singleton_routes_for") do
+          yield route_options
+        end
+      end
     end
 
     def assert_singleton_named_routes_for(singleton_name, options = {})
@@ -1323,10 +1334,16 @@ class ResourcesTest < ActionController::TestCase
       assert_named_route "#{full_path}/new.xml",  "new_#{name_prefix}#{singleton_name}_path",  route_options.merge(format: "xml")
       assert_named_route "#{full_path}/edit",     "edit_#{name_prefix}#{singleton_name}_path",           route_options
       assert_named_route "#{full_path}/edit.xml", "edit_#{name_prefix}#{singleton_name}_path", route_options.merge(format: "xml")
+
+      if block_given?
+        _assert_nothing_raised_or_warn("assert_singleton_named_routes_for") do
+          yield route_options
+        end
+      end
     end
 
     def assert_named_route(expected, route, options)
-      actual = @controller.send(route, options) rescue $!.class.name
+      actual = @controller.public_send(route, options) rescue $!.class.name
       assert_equal expected, actual, "Error on route: #{route}(#{options.inspect})"
     end
 

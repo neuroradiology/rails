@@ -44,6 +44,13 @@
     content: "\00a0"; // &nbsp;
   }
 
+  th {
+    font-weight: inherit;
+    color: #7f7f7f;
+    text-align: right;
+    white-space: nowrap;
+  }
+
   iframe {
     border: 0;
     width: 100%;
@@ -54,58 +61,69 @@
 <body>
 <header>
   <dl>
-    <% if @email.respond_to?(:smtp_envelope_from) && Array(@email.from) != Array(@email.smtp_envelope_from) %>
+    <% if Array(@email.from) != Array(@email.smtp_envelope_from) %>
       <dt>SMTP-From:</dt>
-      <dd><%= @email.smtp_envelope_from %></dd>
+      <dd id="smtp_from"><%= @email.smtp_envelope_from %></dd>
     <% end %>
 
-    <% if @email.respond_to?(:smtp_envelope_to) && @email.to != @email.smtp_envelope_to %>
+    <% if Set[*@email.to, *@email.cc, *@email.bcc] != Set[*@email.smtp_envelope_to] %>
       <dt>SMTP-To:</dt>
-      <dd><%= @email.smtp_envelope_to %></dd>
+      <dd id="smtp_to"><%= @email.smtp_envelope_to.join(", ") %></dd>
     <% end %>
 
     <dt>From:</dt>
-    <dd><%= @email.header['from'] %></dd>
+    <dd id="from"><%= @email.header['from'] %></dd>
 
     <% if @email.reply_to %>
       <dt>Reply-To:</dt>
-      <dd><%= @email.header['reply-to'] %></dd>
+      <dd id="reply_to"><%= @email.header['reply-to'] %></dd>
     <% end %>
 
     <dt>To:</dt>
-    <dd><%= @email.header['to'] %></dd>
+    <dd id="to"><%= @email.header['to'] %></dd>
 
     <% if @email.cc %>
       <dt>CC:</dt>
-      <dd><%= @email.header['cc'] %></dd>
+      <dd id="cc"><%= @email.header['cc'] %></dd>
+    <% end %>
+
+    <% if @email.bcc %>
+      <dt>BCC:</dt>
+      <dd id="bcc"><%= @email.header['bcc'] %></dd>
     <% end %>
 
     <dt>Date:</dt>
-    <dd><%= Time.current.rfc2822 %></dd>
+    <dd id="date"><%= @email.header['date'] || Time.current.rfc2822 %></dd>
 
     <dt>Subject:</dt>
-    <dd><strong><%= @email.subject %></strong></dd>
+    <dd><strong id="subject"><%= @email.subject %></strong></dd>
 
-    <% unless @email.attachments.nil? || @email.attachments.empty? %>
+    <% if @attachments.any? || @inline_attachments.any? %>
       <dt>Attachments:</dt>
       <dd>
-        <% @email.attachments.each do |a| %>
-          <% filename = a.respond_to?(:original_filename) ? a.original_filename : a.filename %>
-          <%= link_to filename, "data:application/octet-stream;charset=utf-8;base64,#{Base64.encode64(a.body.to_s)}", download: filename %>
+        <% @attachments.each do |filename, attachment| %>
+          <%= link_to filename, attachment_url(attachment), download: filename %>
+        <% end %>
+
+        <% if @inline_attachments.any? %>
+          (Inline: <% @inline_attachments.each do |filename, attachment| %>
+            <%= link_to filename, attachment_url(attachment), download: filename %><% end %>)
         <% end %>
       </dd>
     <% end %>
 
     <dt>Format:</dt>
-    <% if @email.multipart? %>
+    <% if @email.html_part && @email.text_part %>
       <dd>
         <select id="part" onchange="refreshBody(false);">
           <option <%= request.format == Mime[:html] ? 'selected' : '' %> value="<%= part_query('text/html') %>">View as HTML email</option>
           <option <%= request.format == Mime[:text] ? 'selected' : '' %> value="<%= part_query('text/plain') %>">View as plain-text email</option>
         </select>
       </dd>
+    <% elsif @part %>
+      <dd id="mime_type" data-mime-type="<%= part_query(@part.mime_type) %>"><%= @part.mime_type == 'text/html' ? 'HTML email' : 'plain-text email' %></dd>
     <% else %>
-      <dd id="mime_type" data-mime-type="<%= part_query(@email.mime_type) %>"><%= @email.mime_type == 'text/html' ? 'HTML email' : 'plain-text email' %></dd>
+      <dd id="mime_type" data-mime-type=""></dd>
     <% end %>
 
     <% if I18n.available_locales.count > 1 %>
@@ -118,11 +136,31 @@
         </select>
       </dd>
     <% end %>
+
+    <% unless @email.header_fields.nil? || @email.header_fields.empty? %>
+      <dt>Headers:</dt>
+      <dd>
+        <details>
+          <summary>Show all headers</summary>
+          <table>
+          <% @email.header_fields.each do |field| %>
+            <tr>
+              <th><%= field.name %>:</th>
+              <td><%= field.value %></td>
+            </tr>
+          <% end %>
+          </table>
+        </details>
+      </dd>
+    <% end %>
+
+    <dt>EML File:</dt>
+    <dd><%= link_to "Download", action: :download %></dd>
   </dl>
 </header>
 
 <% if @part && @part.mime_type %>
-  <iframe seamless name="messageBody" src="?<%= part_query(@part.mime_type) %>"></iframe>
+  <iframe name="messageBody" src="?<%= part_query(@part.mime_type) %>"></iframe>
 <% else %>
   <p>
     You are trying to preview an email that does not have any content.

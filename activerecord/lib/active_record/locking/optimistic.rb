@@ -2,19 +2,19 @@
 
 module ActiveRecord
   module Locking
-    # == What is Optimistic Locking
+    # == What is \Optimistic \Locking
     #
     # Optimistic locking allows multiple users to access the same record for edits, and assumes a minimum of
     # conflicts with the data. It does this by checking whether another process has made changes to a record since
-    # it was opened, an <tt>ActiveRecord::StaleObjectError</tt> exception is thrown if that has occurred
+    # it was opened, an ActiveRecord::StaleObjectError exception is thrown if that has occurred
     # and the update is ignored.
     #
-    # Check out <tt>ActiveRecord::Locking::Pessimistic</tt> for an alternative.
+    # Check out +ActiveRecord::Locking::Pessimistic+ for an alternative.
     #
     # == Usage
     #
     # Active Record supports optimistic locking if the +lock_version+ field is present. Each update to the
-    # record increments the +lock_version+ column and the locking facilities ensure that records instantiated twice
+    # record increments the integer column +lock_version+ and the locking facilities ensure that records instantiated twice
     # will let the last one saved raise a +StaleObjectError+ if the first was also updated. Example:
     #
     #   p1 = Person.find(1)
@@ -56,8 +56,22 @@ module ActiveRecord
         class_attribute :lock_optimistically, instance_writer: false, default: true
       end
 
-      def locking_enabled? #:nodoc:
+      def locking_enabled? # :nodoc:
         self.class.locking_enabled?
+      end
+
+      def increment!(*, **) # :nodoc:
+        super.tap do
+          if locking_enabled?
+            self[self.class.locking_column] += 1
+            clear_attribute_change(self.class.locking_column)
+          end
+        end
+      end
+
+      def initialize_dup(other) # :nodoc:
+        super
+        _clear_locking_column if locking_enabled?
       end
 
       private
@@ -80,15 +94,18 @@ module ActiveRecord
 
           begin
             locking_column = self.class.locking_column
-            previous_lock_value = read_attribute_before_type_cast(locking_column)
+            lock_attribute_was = @attributes[locking_column]
+
+            update_constraints = _query_constraints_hash
+
+            attribute_names = attribute_names.dup if attribute_names.frozen?
             attribute_names << locking_column
 
             self[locking_column] += 1
 
             affected_rows = self.class._update_record(
               attributes_with_values(attribute_names),
-              @primary_key => id_in_database,
-              locking_column => previous_lock_value
+              update_constraints
             )
 
             if affected_rows != 1
@@ -99,26 +116,39 @@ module ActiveRecord
 
           # If something went wrong, revert the locking_column value.
           rescue Exception
-            self[locking_column] = previous_lock_value.to_i
+            @attributes[locking_column] = lock_attribute_was
             raise
           end
         end
 
         def destroy_row
-          return super unless locking_enabled?
+          affected_rows = super
 
-          locking_column = self.class.locking_column
-
-          affected_rows = self.class._delete_record(
-            @primary_key => id_in_database,
-            locking_column => read_attribute_before_type_cast(locking_column)
-          )
-
-          if affected_rows != 1
+          if locking_enabled? && affected_rows != 1
             raise ActiveRecord::StaleObjectError.new(self, "destroy")
           end
 
           affected_rows
+        end
+
+        def _lock_value_for_database(locking_column)
+          if will_save_change_to_attribute?(locking_column)
+            @attributes[locking_column].value_for_database
+          else
+            @attributes[locking_column].original_value_for_database
+          end
+        end
+
+        def _clear_locking_column
+          self[self.class.locking_column] = nil
+          clear_attribute_change(self.class.locking_column)
+        end
+
+        def _query_constraints_hash
+          return super unless locking_enabled?
+
+          locking_column = self.class.locking_column
+          super.merge(locking_column => _lock_value_for_database(locking_column))
         end
 
         module ClassMethods
@@ -138,10 +168,7 @@ module ActiveRecord
           end
 
           # The version column used for optimistic locking. Defaults to +lock_version+.
-          def locking_column
-            @locking_column = DEFAULT_LOCKING_COLUMN unless defined?(@locking_column)
-            @locking_column
-          end
+          attr_reader :locking_column
 
           # Reset the column used for optimistic locking back to the +lock_version+ default.
           def reset_locking_column
@@ -156,18 +183,19 @@ module ActiveRecord
           end
 
           private
-            # We need to apply this decorator here, rather than on module inclusion. The closure
-            # created by the matcher would otherwise evaluate for `ActiveRecord::Base`, not the
-            # sub class being decorated. As such, changes to `lock_optimistically`, or
-            # `locking_column` would not be picked up.
-            def inherited(subclass)
-              subclass.class_eval do
-                is_lock_column = ->(name, _) { lock_optimistically && name == locking_column }
-                decorate_matching_attribute_types(is_lock_column, "_optimistic_locking") do |type|
-                  LockingType.new(type)
-                end
+            def hook_attribute_type(name, cast_type)
+              if lock_optimistically && name == locking_column
+                cast_type = LockingType.new(cast_type)
               end
+
               super
+            end
+
+            def inherited(base)
+              super
+              base.class_eval do
+                @locking_column = DEFAULT_LOCKING_COLUMN
+              end
             end
         end
     end
@@ -176,6 +204,10 @@ module ActiveRecord
     # `nil` values to `lock_version`, and not result in `ActiveRecord::StaleObjectError`
     # during update record.
     class LockingType < DelegateClass(Type::Value) # :nodoc:
+      def self.new(subtype)
+        self === subtype ? subtype : super
+      end
+
       def deserialize(value)
         super.to_i
       end

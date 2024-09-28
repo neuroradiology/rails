@@ -84,7 +84,7 @@ module ActiveRecord
   # == Types of callbacks
   #
   # There are three types of callbacks accepted by the callback macros: method references (symbol), callback objects,
-  # inline methods (using a proc). Method references and callback objects are the recommended approaches,
+  # inline methods (using a proc). \Method references and callback objects are the recommended approaches,
   # inline methods using a proc are sometimes appropriate (such as for creating mix-ins).
   #
   # The method reference callbacks work by specifying a protected or private method available in the object, like this:
@@ -173,7 +173,7 @@ module ActiveRecord
   #
   # If a <tt>before_*</tt> callback throws +:abort+, all the later callbacks and
   # the associated action are cancelled.
-  # Callbacks are generally run in the order they are defined, with the exception of callbacks defined as
+  # \Callbacks are generally run in the order they are defined, with the exception of callbacks defined as
   # methods on the model, which are called last.
   #
   # == Ordering callbacks
@@ -224,42 +224,26 @@ module ActiveRecord
   #     after_save :do_something_else
   #
   #     private
+  #       def log_children
+  #         # Child processing
+  #       end
   #
-  #     def log_children
-  #       # Child processing
-  #     end
-  #
-  #     def do_something_else
-  #       # Something else
-  #     end
+  #       def do_something_else
+  #         # Something else
+  #       end
   #   end
   #
   # In this case the +log_children+ is executed before +do_something_else+.
-  # The same applies to all non-transactional callbacks.
+  # This applies to all non-transactional callbacks, and to +before_commit+.
   #
-  # As seen below, in case there are multiple transactional callbacks the order
-  # is reversed.
+  # For transactional +after_+ callbacks (+after_commit+, +after_rollback+, etc), the order
+  # can be set via configuration.
   #
-  # For example:
+  #   config.active_record.run_after_transaction_callbacks_in_order_defined = false
   #
-  #   class Topic < ActiveRecord::Base
-  #     has_many :children
-  #
-  #     after_commit :log_children
-  #     after_commit :do_something_else
-  #
-  #     private
-  #
-  #     def log_children
-  #       # Child processing
-  #     end
-  #
-  #     def do_something_else
-  #       # Something else
-  #     end
-  #   end
-  #
-  # In this case the +do_something_else+ is executed before +log_children+.
+  # When set to +true+ (the default from \Rails 7.1), callbacks are executed in the order they
+  # are defined, just like the example above. When set to +false+, the order is reversed, so
+  # +do_something_else+ is executed before +log_children+.
   #
   # == \Transactions
   #
@@ -301,7 +285,138 @@ module ActiveRecord
       :before_destroy, :around_destroy, :after_destroy, :after_commit, :after_rollback
     ]
 
-    def destroy #:nodoc:
+    module ClassMethods
+      include ActiveModel::Callbacks
+
+      ##
+      # :method: after_initialize
+      #
+      # :call-seq: after_initialize(*args, &block)
+      #
+      # Registers a callback to be called after a record is instantiated. See
+      # ActiveRecord::Callbacks for more information.
+
+      ##
+      # :method: after_find
+      #
+      # :call-seq: after_find(*args, &block)
+      #
+      # Registers a callback to be called after a record is instantiated
+      # via a finder. See ActiveRecord::Callbacks for more information.
+
+      ##
+      # :method: after_touch
+      #
+      # :call-seq: after_touch(*args, &block)
+      #
+      # Registers a callback to be called after a record is touched. See
+      # ActiveRecord::Callbacks for more information.
+
+      ##
+      # :method: before_save
+      #
+      # :call-seq: before_save(*args, &block)
+      #
+      # Registers a callback to be called before a record is saved. See
+      # ActiveRecord::Callbacks for more information.
+
+      ##
+      # :method: around_save
+      #
+      # :call-seq: around_save(*args, &block)
+      #
+      # Registers a callback to be called around the save of a record. See
+      # ActiveRecord::Callbacks for more information.
+
+      ##
+      # :method: after_save
+      #
+      # :call-seq: after_save(*args, &block)
+      #
+      # Registers a callback to be called after a record is saved. See
+      # ActiveRecord::Callbacks for more information.
+
+      ##
+      # :method: before_create
+      #
+      # :call-seq: before_create(*args, &block)
+      #
+      # Registers a callback to be called before a record is created. See
+      # ActiveRecord::Callbacks for more information.
+
+      ##
+      # :method: around_create
+      #
+      # :call-seq: around_create(*args, &block)
+      #
+      # Registers a callback to be called around the creation of a record. See
+      # ActiveRecord::Callbacks for more information.
+
+      ##
+      # :method: after_create
+      #
+      # :call-seq: after_create(*args, &block)
+      #
+      # Registers a callback to be called after a record is created. See
+      # ActiveRecord::Callbacks for more information.
+
+      ##
+      # :method: before_update
+      #
+      # :call-seq: before_update(*args, &block)
+      #
+      # Registers a callback to be called before a record is updated. See
+      # ActiveRecord::Callbacks for more information.
+
+      ##
+      # :method: around_update
+      #
+      # :call-seq: around_update(*args, &block)
+      #
+      # Registers a callback to be called around the update of a record. See
+      # ActiveRecord::Callbacks for more information.
+
+      ##
+      # :method: after_update
+      #
+      # :call-seq: after_update(*args, &block)
+      #
+      # Registers a callback to be called after a record is updated. See
+      # ActiveRecord::Callbacks for more information.
+
+      ##
+      # :method: before_destroy
+      #
+      # :call-seq: before_destroy(*args, &block)
+      #
+      # Registers a callback to be called before a record is destroyed. See
+      # ActiveRecord::Callbacks for more information.
+
+      ##
+      # :method: around_destroy
+      #
+      # :call-seq: around_destroy(*args, &block)
+      #
+      # Registers a callback to be called around the destruction of a record.
+      # See ActiveRecord::Callbacks for more information.
+
+      ##
+      # :method: after_destroy
+      #
+      # :call-seq: after_destroy(*args, &block)
+      #
+      # Registers a callback to be called after a record is destroyed. See
+      # ActiveRecord::Callbacks for more information.
+    end
+
+    included do
+      include ActiveModel::Validations::Callbacks
+
+      define_model_callbacks :initialize, :find, :touch, only: :after
+      define_model_callbacks :save, :create, :update, :destroy
+    end
+
+    def destroy # :nodoc:
       @_destroy_callback_already_called ||= false
       return if @_destroy_callback_already_called
       @_destroy_callback_already_called = true
@@ -313,7 +428,7 @@ module ActiveRecord
       @_destroy_callback_already_called = false
     end
 
-    def touch(*, **) #:nodoc:
+    def touch(*, **) # :nodoc:
       _run_touch_callbacks { super }
     end
 
@@ -331,7 +446,7 @@ module ActiveRecord
     end
 
     def _update_record
-      _run_update_callbacks { super }
+      _run_update_callbacks { record_update_timestamps { super } }
     end
   end
 end

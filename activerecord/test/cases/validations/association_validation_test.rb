@@ -3,7 +3,7 @@
 require "cases/helper"
 require "models/topic"
 require "models/reply"
-require "models/man"
+require "models/human"
 require "models/interest"
 
 class AssociationValidationTest < ActiveRecord::TestCase
@@ -49,7 +49,7 @@ class AssociationValidationTest < ActiveRecord::TestCase
 
   def test_validates_associated_without_marked_for_destruction
     reply = Class.new do
-      def valid?
+      def valid?(context = nil)
         true
       end
     end
@@ -80,20 +80,42 @@ class AssociationValidationTest < ActiveRecord::TestCase
 
   def test_validates_presence_of_belongs_to_association__parent_is_new_record
     repair_validations(Interest) do
-      # Note that Interest and Man have the :inverse_of option set
-      Interest.validates_presence_of(:man)
-      man = Man.new(name: "John")
-      interest = man.interests.build(topic: "Airplanes")
-      assert interest.valid?, "Expected interest to be valid, but was not. Interest should have a man object associated"
+      # Note that Interest and Human have the :inverse_of option set
+      Interest.validates_presence_of(:human)
+      human = Human.new(name: "John")
+      interest = human.interests.build(topic: "Airplanes")
+      assert_predicate interest, :valid?, "Expected interest to be valid, but was not. Interest should have a human object associated"
     end
   end
 
   def test_validates_presence_of_belongs_to_association__existing_parent
     repair_validations(Interest) do
-      Interest.validates_presence_of(:man)
-      man = Man.create!(name: "John")
-      interest = man.interests.build(topic: "Airplanes")
-      assert interest.valid?, "Expected interest to be valid, but was not. Interest should have a man object associated"
+      Interest.validates_presence_of(:human)
+      human = Human.create!(name: "John")
+      interest = human.interests.build(topic: "Airplanes")
+      assert_predicate interest, :valid?, "Expected interest to be valid, but was not. Interest should have a human object associated"
     end
+  end
+
+  def test_validates_associated_with_custom_context
+    Reply.validates_associated :topic, on: :custom
+    Topic.validates_presence_of :content, on: :custom
+    r = Reply.create("title" => "A reply", "content" => "with content!")
+    r.topic = Topic.create("title" => "uhohuhoh")
+    assert_predicate r, :valid?
+    assert_not r.valid?(:custom)
+    assert_equal ["is invalid"], r.errors[:topic]
+  end
+
+  def test_validates_associated_with_create_context
+    Reply.validates_associated :topic, on: :create
+    Topic.validates_presence_of :content, on: :create
+    t = Topic.create(title: "uhoh", content: "stuff")
+    t.update!(content: nil)
+    # NOTE: Does not pass along :create context from reply to Topic validation.
+    r = t.replies.create(title: "A reply", content: "with content!")
+
+    assert_predicate t, :valid?
+    assert_predicate r, :valid?
   end
 end

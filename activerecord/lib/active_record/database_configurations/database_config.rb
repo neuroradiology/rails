@@ -3,29 +3,33 @@
 module ActiveRecord
   class DatabaseConfigurations
     # ActiveRecord::Base.configurations will return either a HashConfig or
-    # UrlConfig respectively. It will never return a DatabaseConfig object,
+    # UrlConfig respectively. It will never return a +DatabaseConfig+ object,
     # as this is the parent class for the types of database configuration objects.
     class DatabaseConfig # :nodoc:
       attr_reader :env_name, :name
 
-      attr_accessor :owner_name
-
       def initialize(env_name, name)
         @env_name = env_name
         @name = name
+        @adapter_class = nil
       end
 
-      def spec_name
-        @name
-      end
-      deprecate spec_name: "please use name instead"
-
-      def config
-        raise NotImplementedError
+      def adapter_class
+        @adapter_class ||= ActiveRecord::ConnectionAdapters.resolve(adapter)
       end
 
-      def adapter_method
-        "#{adapter}_connection"
+      def inspect # :nodoc:
+        "#<#{self.class.name} env_name=#{@env_name} name=#{@name} adapter_class=#{adapter_class}>"
+      end
+
+      def new_connection
+        adapter_class.new(configuration_hash)
+      end
+
+      def validate!
+        adapter_class if adapter
+
+        true
       end
 
       def host
@@ -45,6 +49,22 @@ module ActiveRecord
       end
 
       def pool
+        raise NotImplementedError
+      end
+
+      def min_threads
+        raise NotImplementedError
+      end
+
+      def max_threads
+        raise NotImplementedError
+      end
+
+      def max_queue
+        raise NotImplementedError
+      end
+
+      def query_cache
         raise NotImplementedError
       end
 
@@ -73,6 +93,10 @@ module ActiveRecord
       end
 
       def schema_cache_path
+        raise NotImplementedError
+      end
+
+      def use_metadata_table?
         raise NotImplementedError
       end
     end

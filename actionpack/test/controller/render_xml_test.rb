@@ -74,7 +74,7 @@ class RenderXmlTest < ActionController::TestCase
       set.draw do
         resources :customers
 
-        ActiveSupport::Deprecation.silence do
+        ActionDispatch.deprecator.silence do
           get ":controller/:action"
         end
       end
@@ -97,14 +97,5 @@ class RenderXmlTest < ActionController::TestCase
   def test_should_use_implicit_content_type
     get :implicit_content_type, format: "atom"
     assert_equal Mime[:atom], @response.media_type
-  end
-
-  def test_should_not_trigger_content_type_deprecation
-    original = ActionDispatch::Response.return_only_media_type_on_content_type
-    ActionDispatch::Response.return_only_media_type_on_content_type = true
-
-    assert_not_deprecated { get :render_with_to_xml }
-  ensure
-    ActionDispatch::Response.return_only_media_type_on_content_type = original
   end
 end

@@ -137,10 +137,10 @@ class NestedAttributesWithCallbacksTest < ActiveRecord::TestCase
   end
 
   def assert_assignment_affects_records_in_target(association_name)
-    association = @pirate.send(association_name)
-    assert association.detect { |b| b == bird_to_update }.name_changed?,
+    association = @pirate.public_send(association_name)
+    assert_predicate association.detect { |b| b == bird_to_update }, :name_changed?,
       "Update record not updated"
-    assert association.detect { |b| b == bird_to_destroy }.marked_for_destruction?,
+    assert_predicate association.detect { |b| b == bird_to_destroy }, :marked_for_destruction?,
       "Destroy record not marked for destruction"
   end
 end

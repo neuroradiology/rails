@@ -14,15 +14,18 @@ module I18n
 
     config.eager_load_namespaces << I18n
 
-    # Set the i18n configuration after initialization since a lot of
-    # configuration is still usually done in application initializers.
-    config.after_initialize do |app|
+    # Make sure i18n is ready before eager loading, in case any eager loaded
+    # code needs it.
+    config.before_eager_load do |app|
       I18n::Railtie.initialize_i18n(app)
     end
 
-    # Trigger i18n config before any eager loading has happened
-    # so it's ready if any classes require it when eager loaded.
-    config.before_eager_load do |app|
+    # i18n initialization needs to run after application initialization, since
+    # initializers may configure i18n.
+    #
+    # If the application eager loaded, this was done on before_eager_load. The
+    # hook is still OK, though, because initialize_i18n is idempotent.
+    config.after_initialize do |app|
       I18n::Railtie.initialize_i18n(app)
     end
 
@@ -48,8 +51,11 @@ module I18n
           app.config.i18n.load_path.unshift(*value.flat_map(&:existent))
         when :load_path
           I18n.load_path += value
+        when :raise_on_missing_translations
+          strict = value == :strict
+          setup_raise_on_missing_translations_config(app, strict)
         else
-          I18n.send("#{setting}=", value)
+          I18n.public_send("#{setting}=", value)
         end
       end
 
@@ -58,19 +64,41 @@ module I18n
       # Restore available locales check so it will take place from now on.
       I18n.enforce_available_locales = enforce_available_locales
 
-      directories = watched_dirs_with_extensions(reloadable_paths)
-      reloader = app.config.file_watcher.new(I18n.load_path.dup, directories) do
-        I18n.load_path.keep_if { |p| File.exist?(p) }
-        I18n.load_path |= reloadable_paths.flat_map(&:existent)
-      end
+      if app.config.reloading_enabled?
+        directories = watched_dirs_with_extensions(reloadable_paths)
+        root_load_paths = I18n.load_path.select { |path| path.start_with?(Rails.root.to_s) }
+        reloader = app.config.file_watcher.new(root_load_paths, directories) do
+          I18n.load_path.delete_if { |p| p.start_with?(Rails.root.to_s) && !File.exist?(p) }
+          I18n.load_path |= reloadable_paths.flat_map(&:existent)
+        end
 
-      app.reloaders << reloader
-      app.reloader.to_run do
-        reloader.execute_if_updated { require_unload_lock! }
+        app.reloaders << reloader
+        app.reloader.to_run do
+          reloader.execute_if_updated { require_unload_lock! }
+        end
+        reloader.execute
       end
-      reloader.execute
 
       @i18n_inited = true
+    end
+
+    def self.setup_raise_on_missing_translations_config(app, strict)
+      ActiveSupport.on_load(:action_view) do
+        ActionView::Helpers::TranslationHelper.raise_on_missing_translations = app.config.i18n.raise_on_missing_translations
+      end
+
+      ActiveSupport.on_load(:active_model_translation) do
+        ActiveModel::Translation.raise_on_missing_translations = app.config.i18n.raise_on_missing_translations if strict
+      end
+
+      if app.config.i18n.raise_on_missing_translations &&
+          I18n.exception_handler.is_a?(I18n::ExceptionHandler) # Only override the i18n gem's default exception handler.
+
+        I18n.exception_handler = ->(exception, *) {
+          exception = exception.to_exception if exception.is_a?(I18n::MissingTranslation)
+          raise exception
+        }
+      end
     end
 
     def self.include_fallbacks_module
@@ -89,19 +117,6 @@ module I18n
         else # TrueClass
           [I18n.default_locale]
         end
-
-      if args.empty? || args.first.is_a?(Hash)
-        ActiveSupport::Deprecation.warn(<<-MSG.squish)
-          Using I18n fallbacks with an empty `defaults` sets the defaults to
-          include the `default_locale`. This behavior will change in Rails 6.1.
-          If you desire the default locale to be included in the defaults, please
-          explicitly configure it with `config.i18n.fallbacks.defaults =
-          [I18n.default_locale]` or `config.i18n.fallbacks = [I18n.default_locale,
-          {...}]`. If you want to opt-in to the new behavior, use
-          `config.i18n.fallbacks.defaults = [nil, {...}]`.
-        MSG
-        args.unshift I18n.default_locale
-      end
 
       I18n.fallbacks = I18n::Locale::Fallbacks.new(*args)
     end

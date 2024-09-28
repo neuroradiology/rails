@@ -5,7 +5,7 @@ require "abstract_unit"
 module TestFileUtils
   def file_name() File.basename(__FILE__) end
   def file_path() __FILE__ end
-  def file_data() @data ||= File.open(file_path, "rb") { |f| f.read } end
+  def file_data() @data ||= File.binread(file_path) end
 end
 
 class SendFileController < ActionController::Base
@@ -146,7 +146,6 @@ class SendFileTest < ActionController::TestCase
       assert_equal "image/png", response.content_type
       assert_equal %(disposition; filename="filename"; filename*=UTF-8''filename), response.get_header("Content-Disposition")
       assert_equal "binary", response.get_header("Content-Transfer-Encoding")
-      assert_equal "private", response.get_header("Cache-Control")
     end
   end
 
@@ -206,6 +205,37 @@ class SendFileTest < ActionController::TestCase
 
     assert_kind_of String, response.body
     assert_equal file_data, response.body
+  end
+
+  def test_send_file_instrumentation
+    @controller.options = { disposition: :inline }
+    payload = nil
+
+    subscriber = proc do |event|
+      payload = event.payload
+    end
+
+    ActiveSupport::Notifications.subscribed(subscriber, "send_file.action_controller") do
+      process("file")
+    end
+
+    assert_equal __FILE__, payload[:path]
+    assert_equal :inline, payload[:disposition]
+  end
+
+  def test_send_data_instrumentation
+    @controller.options = { content_type: "application/x-ruby" }
+    payload = nil
+
+    subscriber = proc do |event|
+      payload = event.payload
+    end
+
+    ActiveSupport::Notifications.subscribed(subscriber, "send_data.action_controller") do
+      process("data")
+    end
+
+    assert_equal("application/x-ruby", payload[:content_type])
   end
 
   %w(file data).each do |method|

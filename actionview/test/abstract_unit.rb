@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
+require "active_support/testing/strict_warnings"
+
 $:.unshift File.expand_path("lib", __dir__)
-$:.unshift File.expand_path("fixtures/helpers", __dir__)
-$:.unshift File.expand_path("fixtures/alternate_helpers", __dir__)
 
 ENV["TMPDIR"] = File.expand_path("tmp", __dir__)
 
@@ -23,12 +23,23 @@ require "action_view/testing/resolvers"
 require "active_support/dependencies"
 require "active_model"
 
-ActiveSupport::Dependencies.hook!
+module ActionViewTestSuiteUtils
+  def self.require_helpers(helpers_dirs)
+    Array(helpers_dirs).each do |helpers_dir|
+      Dir.glob("#{helpers_dir}/**/*_helper.rb") do |helper_file|
+        require helper_file
+      end
+    end
+  end
+end
+
+ActionViewTestSuiteUtils.require_helpers("#{__dir__}/fixtures/helpers")
+ActionViewTestSuiteUtils.require_helpers("#{__dir__}/fixtures/alternate_helpers")
 
 Thread.abort_on_exception = true
 
 # Show backtraces for deprecated behavior for quicker cleanup.
-ActiveSupport::Deprecation.debug = true
+ActionView.deprecator.debug = true
 
 # Disable available locale checks to avoid warnings running the test suite.
 I18n.enforce_available_locales = false
@@ -61,21 +72,8 @@ module RenderERBUtils
   end
 end
 
-class RoutedRackApp
-  attr_reader :routes
-
-  def initialize(routes, &blk)
-    @routes = routes
-    @stack = ActionDispatch::MiddlewareStack.new(&blk).build(@routes)
-  end
-
-  def call(env)
-    @stack.call(env)
-  end
-end
-
 class BasicController
-  attr_accessor :request
+  attr_accessor :request, :response
 
   def config
     @config ||= ActiveSupport::InheritableOptions.new(ActionController::Base.config).tap do |config|
@@ -91,30 +89,13 @@ class BasicController
 end
 
 class ActionDispatch::IntegrationTest < ActiveSupport::TestCase
-  def self.build_app(routes = nil)
-    routes ||= ActionDispatch::Routing::RouteSet.new.tap { |rs|
-      rs.draw { }
-    }
-    RoutedRackApp.new(routes) do |middleware|
-      middleware.use ActionDispatch::ShowExceptions, ActionDispatch::PublicExceptions.new("#{FIXTURE_LOAD_PATH}/public")
-      middleware.use ActionDispatch::DebugExceptions
-      middleware.use ActionDispatch::Callbacks
-      middleware.use ActionDispatch::Cookies
-      middleware.use ActionDispatch::Flash
-      middleware.use Rack::Head
-      yield(middleware) if block_given?
-    end
-  end
-
-  self.app = build_app
-
-  def with_routing(&block)
-    temporary_routes = ActionDispatch::Routing::RouteSet.new
-    old_app, self.class.app = self.class.app, self.class.build_app(temporary_routes)
-
-    yield temporary_routes
-  ensure
-    self.class.app = old_app
+  self.app = ActionDispatch::MiddlewareStack.new do |middleware|
+    middleware.use ActionDispatch::ShowExceptions, ActionDispatch::PublicExceptions.new("#{FIXTURE_LOAD_PATH}/public")
+    middleware.use ActionDispatch::DebugExceptions
+    middleware.use ActionDispatch::Callbacks
+    middleware.use ActionDispatch::Cookies
+    middleware.use ActionDispatch::Flash
+    middleware.use Rack::Head
   end
 end
 
@@ -136,22 +117,12 @@ module ActionController
     include ActionDispatch::TestProcess
 
     def self.with_routes(&block)
-      routes = ActionDispatch::Routing::RouteSet.new
-      routes.draw(&block)
-      include Module.new {
-        define_method(:setup) do
-          super()
-          @routes = routes
-          @controller.singleton_class.include @routes.url_helpers
-        end
-      }
-      routes
-    end
+      setup do
+        @routes = ActionDispatch::Routing::RouteSet.new
+        @routes.draw(&block)
 
-    def with_routes(&block)
-      @routes = ActionDispatch::Routing::RouteSet.new
-      @routes.draw(&block)
-      @routes
+        @controller.singleton_class.include @routes.url_helpers if @controller
+      end
     end
   end
 end
@@ -168,20 +139,13 @@ module ActionDispatch
 end
 
 class ActiveSupport::TestCase
-  parallelize
+  if Process.respond_to?(:fork) && !Gem.win_platform?
+    parallelize
+  else
+    parallelize(with: :threads)
+  end
 
   include ActiveSupport::Testing::MethodCallAssertions
-
-  private
-    # Skips the current run on Rubinius using Minitest::Assertions#skip
-    def rubinius_skip(message = "")
-      skip message if RUBY_ENGINE == "rbx"
-    end
-
-    # Skips the current run on JRuby using Minitest::Assertions#skip
-    def jruby_skip(message = "")
-      skip message if defined?(JRUBY_VERSION)
-    end
 end
 
 require_relative "../../tools/test_common"

@@ -10,12 +10,12 @@ class CaptureHelperTest < ActionView::TestCase
   end
 
   def test_capture_captures_the_temporary_output_buffer_in_its_block
-    assert_nil @av.output_buffer
+    assert_predicate @av.output_buffer, :empty?
     string = @av.capture do
       @av.output_buffer << "foo"
       @av.output_buffer << "bar"
     end
-    assert_nil @av.output_buffer
+    assert_predicate @av.output_buffer, :empty?
     assert_equal "foobar", string
   end
 
@@ -40,6 +40,14 @@ class CaptureHelperTest < ActionView::TestCase
     assert_equal "&lt;em&gt;bar&lt;/em&gt;", string
   end
 
+  def test_capture_does_not_reassign_buffer
+    buffer_object_id = @av.output_buffer.object_id
+
+    @av.capture do
+      assert_equal buffer_object_id, @av.output_buffer.object_id
+    end
+  end
+
   def test_content_for_used_for_read
     content_for :foo, "foo"
     assert_equal "foo", content_for(:foo)
@@ -51,14 +59,14 @@ class CaptureHelperTest < ActionView::TestCase
   def test_content_for_with_multiple_calls
     assert_not content_for?(:title)
     content_for :title, "foo"
-    content_for :title, "bar"
+    content_for :title, :bar
     assert_equal "foobar", content_for(:title)
   end
 
   def test_content_for_with_multiple_calls_and_flush
     assert_not content_for?(:title)
     content_for :title, "foo"
-    content_for :title, "bar", flush: true
+    content_for :title, :bar, flush: true
     assert_equal "bar", content_for(:title)
   end
 
@@ -172,28 +180,28 @@ class CaptureHelperTest < ActionView::TestCase
     assert_equal "hi&lt;p&gt;title&lt;/p&gt;", content_for(:title)
 
     @view_flow = ActionView::OutputFlow.new
-    provide :title, "hi"
+    provide :title, :hi
     provide :title, raw("<p>title</p>")
     assert_equal "hi<p>title</p>", content_for(:title)
   end
 
   def test_with_output_buffer_swaps_the_output_buffer_given_no_argument
-    assert_nil @av.output_buffer
+    assert_predicate @av.output_buffer, :empty?
     buffer = @av.with_output_buffer do
       @av.output_buffer << "."
     end
-    assert_equal ".", buffer
-    assert_nil @av.output_buffer
+    assert_equal ".", buffer.to_s
+    assert_predicate @av.output_buffer, :empty?
   end
 
   def test_with_output_buffer_swaps_the_output_buffer_with_an_argument
-    assert_nil @av.output_buffer
+    assert_predicate @av.output_buffer, :empty?
     buffer = ActionView::OutputBuffer.new(".")
     @av.with_output_buffer(buffer) do
       @av.output_buffer << "."
     end
-    assert_equal "..", buffer
-    assert_nil @av.output_buffer
+    assert_equal "..", buffer.to_s
+    assert_predicate @av.output_buffer, :empty?
   end
 
   def test_with_output_buffer_restores_the_output_buffer
@@ -218,8 +226,18 @@ class CaptureHelperTest < ActionView::TestCase
   end
 
   def test_with_output_buffer_does_not_assume_there_is_an_output_buffer
-    assert_nil @av.output_buffer
-    assert_equal "", @av.with_output_buffer { }
+    assert_predicate @av.output_buffer, :empty?
+    assert_equal "", @av.with_output_buffer { }.to_s
+  end
+
+  def test_ignore_the_block_return_if_its_the_buffer
+    @av.output_buffer << "something"
+    string = @av.capture do
+      @av.output_buffer << "foo"
+      @av.output_buffer << "bar"
+      @av.output_buffer
+    end
+    assert_equal "foobar", string
   end
 
   def alt_encoding(output_buffer)

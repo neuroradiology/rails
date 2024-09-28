@@ -1,17 +1,20 @@
 # frozen_string_literal: true
 
+ActiveSupport::TestCase.alias_method :force_skip, :skip
+
 if ENV["BUILDKITE"]
-  require "minitest/reporters"
-  require "fileutils"
+  require "minitest-ci"
+  ENV.delete("CI") # CI has affect on the applications, and we don't want it applied to the apps.
 
-  module Minitest
-    def self.plugin_rails_ci_junit_format_test_report_for_buildkite_init(*)
-      dir = File.join(__dir__, "../test-reports/#{ENV['BUILDKITE_JOB_ID']}")
-      reporter << Minitest::Reporters::JUnitReporter.new(dir, false)
-      FileUtils.mkdir_p(dir)
-    end
+  Minitest::Ci.report_dir = File.join(__dir__, "../test-reports/#{ENV['BUILDKITE_JOB_ID']}")
+
+  module DisableSkipping # :nodoc:
+    private
+      def skip(message = nil, *)
+        flunk "Skipping tests is not allowed in this environment (#{message})\n" \
+          "Tests should only be skipped when the environment is missing a required dependency.\n" \
+          "This should never happen on CI."
+      end
   end
-
-  Minitest.load_plugins
-  Minitest.extensions.unshift "rails_ci_junit_format_test_report_for_buildkite"
+  ActiveSupport::TestCase.include(DisableSkipping)
 end

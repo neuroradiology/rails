@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+# :markup: markdown
+
 module ActionText
   module Attachments
     module Caching
@@ -9,7 +11,7 @@ module ActionText
 
       private
         def cache_digest
-          Digest::SHA256.hexdigest(node.to_s)
+          OpenSSL::Digest::SHA256.hexdigest(node.to_s)
         end
     end
   end

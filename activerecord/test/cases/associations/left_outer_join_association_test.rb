@@ -3,18 +3,30 @@
 require "cases/helper"
 require "models/post"
 require "models/comment"
+require "models/rating"
 require "models/author"
 require "models/essay"
 require "models/category"
 require "models/categorization"
 require "models/person"
+require "models/friendship"
+require "models/reference"
+require "models/job"
 
 class LeftOuterJoinAssociationTest < ActiveRecord::TestCase
-  fixtures :authors, :author_addresses, :essays, :posts, :comments, :categorizations, :people
+  fixtures :authors, :author_addresses, :essays, :posts, :comments, :ratings, :categorizations, :people
+
+  def test_merging_multiple_left_joins_from_different_associations
+    count = Author.joins(:posts).merge(Post.left_joins(:comments).merge(Comment.left_joins(:ratings))).count
+    assert_equal 17, count
+
+    count = Author.left_joins(:posts).merge(Post.left_joins(:comments).merge(Comment.left_joins(:ratings))).count
+    assert_equal 17, count
+  end
 
   def test_construct_finder_sql_applies_aliases_tables_on_association_conditions
-    result = Author.left_outer_joins(:thinking_posts, :welcome_posts).to_a
-    assert_equal authors(:david), result.first
+    result = Author.left_outer_joins(:thinking_posts, :welcome_posts).first
+    assert_equal authors(:david), result
   end
 
   def test_construct_finder_sql_does_not_table_name_collide_on_duplicate_associations
@@ -28,8 +40,8 @@ class LeftOuterJoinAssociationTest < ActiveRecord::TestCase
   end
 
   def test_left_outer_joins_count_is_same_as_size_of_loaded_results
-    assert_equal 17, Post.left_outer_joins(:comments).to_a.size
-    assert_equal 17, Post.left_outer_joins(:comments).count
+    assert_equal 18, Post.left_outer_joins(:comments).to_a.size
+    assert_equal 18, Post.left_outer_joins(:comments).count
   end
 
   def test_merging_left_joins_should_be_left_joins
@@ -71,12 +83,21 @@ class LeftOuterJoinAssociationTest < ActiveRecord::TestCase
   end
 
   def test_left_outer_joins_with_string_join
-    assert_equal 16, Author.left_outer_joins(:posts).joins("LEFT OUTER JOIN comments ON comments.post_id = posts.id").count
+    assert_equal 17, Author.left_outer_joins(:posts).joins("LEFT OUTER JOIN comments ON comments.post_id = posts.id").count
+  end
+
+  def test_left_outer_joins_with_arel_join
+    comments = Comment.arel_table
+    posts = Post.arel_table
+    constraint = comments[:post_id].eq(posts[:id])
+    arel_join = comments.create_join(comments, comments.create_on(constraint), Arel::Nodes::OuterJoin)
+
+    assert_equal 17, Author.left_outer_joins(:posts).joins(arel_join).count
   end
 
   def test_join_conditions_added_to_join_clause
     queries = capture_sql { Author.left_outer_joins(:essays).to_a }
-    assert queries.any? { |sql| /writer_type.*?=.*?(Author|\?|\$1|\:a1)/i.match?(sql) }
+    assert queries.any? { |sql| /writer_type.*?=.*?(Author|\?|\$1|:a1)/i.match?(sql) }
     assert queries.none? { |sql| /WHERE/i.match?(sql) }
   end
 
@@ -101,5 +122,13 @@ class LeftOuterJoinAssociationTest < ActiveRecord::TestCase
     author.categorizations.create! special: true
 
     assert_equal [author], Author.where(id: author).left_outer_joins(:special_categorizations)
+  end
+
+  def test_left_outer_joins_includes_all_nested_associations
+    sql, = capture_sql { Friendship.left_outer_joins(:friend_favorite_reference_job, :follower_favorite_reference_job).to_a }
+
+    escape = -> name { Regexp.escape(Friendship.lease_connection.quote_table_name(name)) }
+    assert_match %r(#{escape["friendships.friend_id"]}), sql
+    assert_match %r(#{escape["friendships.follower_id"]}), sql
   end
 end

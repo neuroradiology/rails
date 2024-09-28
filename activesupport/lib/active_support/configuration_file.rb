@@ -19,7 +19,21 @@ module ActiveSupport
     end
 
     def parse(context: nil, **options)
-      YAML.load(render(context), **options) || {}
+      source = @content.include?("<%") ? render(context) : @content
+
+      if source == @content
+        if YAML.respond_to?(:unsafe_load)
+          YAML.unsafe_load_file(@content_path, **options) || {}
+        else
+          YAML.load_file(@content_path, **options) || {}
+        end
+      else
+        if YAML.respond_to?(:unsafe_load)
+          YAML.unsafe_load(source, **options) || {}
+        else
+          YAML.load(source, **options) || {}
+        end
+      end
     rescue Psych::SyntaxError => error
       raise "YAML syntax error occurred while parsing #{@content_path}. " \
             "Please note that YAML must be consistently indented using spaces. Tabs are not allowed. " \
@@ -28,17 +42,17 @@ module ActiveSupport
 
     private
       def read(content_path)
-        require "yaml"
-        require "erb"
+        require "yaml" unless defined?(YAML)
 
         File.read(content_path).tap do |content|
           if content.include?("\u00A0")
-            warn "File contains invisible non-breaking spaces, you may want to remove those"
+            warn "#{content_path} contains invisible non-breaking spaces, you may want to remove those"
           end
         end
       end
 
       def render(context)
+        require "erb" unless defined?(ERB)
         erb = ERB.new(@content).tap { |e| e.filename = @content_path }
         context ? erb.result(context) : erb.result
       end

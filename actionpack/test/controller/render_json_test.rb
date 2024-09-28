@@ -17,6 +17,12 @@ class RenderJsonTest < ActionController::TestCase
     end
   end
 
+  class InspectOptions
+    def as_json(options = {})
+      { options: options }
+    end
+  end
+
   class TestController < ActionController::Base
     protect_from_forgery
 
@@ -26,10 +32,6 @@ class RenderJsonTest < ActionController::TestCase
 
     def render_json_nil
       render json: nil
-    end
-
-    def render_json_render_to_string
-      render plain: render_to_string(json: "[]")
     end
 
     def render_json_hello_world
@@ -63,6 +65,10 @@ class RenderJsonTest < ActionController::TestCase
     def render_json_without_options
       render json: JsonRenderable.new
     end
+
+    def render_json_inspect_options
+      render json: InspectOptions.new
+    end
   end
 
   tests TestController
@@ -80,11 +86,6 @@ class RenderJsonTest < ActionController::TestCase
     get :render_json_nil
     assert_equal "null", @response.body
     assert_equal "application/json", @response.media_type
-  end
-
-  def test_render_json_render_to_string
-    get :render_json_render_to_string
-    assert_equal "[]", @response.body
   end
 
   def test_render_json
@@ -134,21 +135,8 @@ class RenderJsonTest < ActionController::TestCase
     assert_equal '{"a":"b"}', @response.body
   end
 
-  def test_should_not_trigger_content_type_deprecation
-    original = ActionDispatch::Response.return_only_media_type_on_content_type
-    ActionDispatch::Response.return_only_media_type_on_content_type = true
-
-    assert_not_deprecated { get :render_json_hello_world }
-  ensure
-    ActionDispatch::Response.return_only_media_type_on_content_type = original
-  end
-
-  def test_should_not_trigger_content_type_deprecation_with_callback
-    original = ActionDispatch::Response.return_only_media_type_on_content_type
-    ActionDispatch::Response.return_only_media_type_on_content_type = true
-
-    assert_not_deprecated { get :render_json_hello_world_with_callback, xhr: true }
-  ensure
-    ActionDispatch::Response.return_only_media_type_on_content_type = original
+  def test_render_json_avoids_view_options
+    get :render_json_inspect_options
+    assert_equal '{"options":{}}', @response.body
   end
 end

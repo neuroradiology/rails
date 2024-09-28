@@ -20,7 +20,7 @@ class ValidationsTest < ActiveRecord::TestCase
     r = WrongReply.new
     r.title = "Wrong Create"
     assert_not_predicate r, :valid?
-    assert r.errors[:title].any?, "A reply with a bad title should mark that attribute as invalid"
+    assert_predicate r.errors[:title], :any?, "A reply with a bad title should mark that attribute as invalid"
     assert_equal ["is Wrong Create"], r.errors[:title], "A reply with a bad content should contain an error"
   end
 
@@ -33,7 +33,7 @@ class ValidationsTest < ActiveRecord::TestCase
     r.title = "Wrong Update"
     assert_not r.valid?, "Second validation should fail"
 
-    assert r.errors[:title].any?, "A reply with a bad title should mark that attribute as invalid"
+    assert_predicate r.errors[:title], :any?, "A reply with a bad title should mark that attribute as invalid"
     assert_equal ["is Wrong Update"], r.errors[:title], "A reply with a bad content should contain an error"
   end
 
@@ -187,9 +187,17 @@ class ValidationsTest < ActiveRecord::TestCase
       validates_numericality_of :wibble, greater_than_or_equal_to: BigDecimal("97.18")
     end
 
-    assert_not_predicate klass.new(wibble: "97.179"), :valid?
-    assert_not_predicate klass.new(wibble: 97.179), :valid?
-    assert_not_predicate klass.new(wibble: BigDecimal("97.179")), :valid?
+    ["97.179", 97.179, BigDecimal("97.179")].each do |raw_value|
+      subject = klass.new(wibble: raw_value)
+      assert_equal BigDecimal("97.18"), subject.wibble
+      assert_predicate subject, :valid?
+    end
+
+    ["97.174", 97.174, BigDecimal("97.174")].each do |raw_value|
+      subject = klass.new(wibble: raw_value)
+      assert_equal BigDecimal("97.17"), subject.wibble
+      assert_not_predicate subject, :valid?
+    end
   end
 
   def test_numericality_validator_wont_be_affected_by_custom_getter

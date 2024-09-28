@@ -1,238 +1,135 @@
-*   `ActionDispatch::Request.remote_ip` has ip address even when all sites are trusted.
+## Rails 8.0.0.beta1 (September 26, 2024) ##
 
-    Before, if all `X-Forwarded-For` sites were trusted, the `remote_ip` would default to `127.0.0.1`.
-    Now, the furthest proxy site is used. e.g.: It now gives an ip address when using curl from the load balancer.
+*   Fix non-GET requests not updating cookies in `ActionController::TestCase`.
 
-    *Keenan Brock*
+    *Jon Moss*, *Hartley McGuire*
 
-*   Fix possible information leak / session hijacking vulnerability.
+*   Update `ActionController::Live` to use a thread-pool to reuse threads across requests.
 
-    The `ActionDispatch::Session::MemcacheStore` is still vulnerable given it requires the
-    gem dalli to be updated as well.
+    *Adam Renberg Tamm*
 
-    CVE-2019-16782.
+*   Introduce safer, more explicit params handling method with `params#expect` such that
+    `params.expect(table: [ :attr ])` replaces `params.require(:table).permit(:attr)`
 
-*   Include child session assertion count in ActionDispatch::IntegrationTest.
-
-    `IntegrationTest#open_session` uses `dup` to create the new session, which
-    meant it had its own copy of `@assertions`. This prevented the assertions
-    from being correctly counted and reported.
-
-    Child sessions now have their `attr_accessor` overridden to delegate to the
-    root session.
-
-    Fixes #32142.
-
-    *Sam Bostock*
-
-*   Add SameSite protection to every written cookie.
-
-    Enabling `SameSite` cookie protection is an addition to CSRF protection,
-    where cookies won't be sent by browsers in cross-site POST requests when set to `:lax`.
-
-    `:strict` disables cookies being sent in cross-site GET or POST requests.
-
-    Passing `:none` disables this protection and is the same as previous versions albeit a `; SameSite=None` is appended to the cookie.
-
-    See upgrade instructions in config/initializers/new_framework_defaults_6_1.rb.
-
-    More info [here](https://tools.ietf.org/html/draft-west-first-party-cookies-07)
-
-    _NB: Technically already possible as Rack supports SameSite protection, this is to ensure it's applied to all cookies_
-
-    *Cédric Fabianski*
-
-*   Bring back the feature that allows loading external route files from the router.
-
-    This feature existed back in 2012 but got reverted with the incentive that
-    https://github.com/rails/routing_concerns was a better approach. Turned out
-    that this wasn't fully the case and loading external route files from the router
-    can be helpful for applications with a really large set of routes.
-    Without this feature, application needs to implement routes reloading
-    themselves and it's not straightforward.
+    Ensures params are filtered with consideration for the expected
+    types of values, improving handling of params and avoiding ignorable
+    errors caused by params tampering.
 
     ```ruby
-    # config/routes.rb
+    # If the url is altered to ?person=hacked
+    # Before
+    params.require(:person).permit(:name, :age, pets: [:name])
+    # raises NoMethodError, causing a 500 and potential error reporting
 
-    Rails.application.routes.draw do
-      draw(:admin)
-    end
-
-    # config/routes/admin.rb
-
-    get :foo, to: 'foo#bar'
+    # After
+    params.expect(person: [ :name, :age, pets: [[:name]] ])
+    # raises ActionController::ParameterMissing, correctly returning a 400 error
     ```
 
-    *Yehuda Katz*, *Edouard Chin*
+    You may also notice the new double array `[[:name]]`. In order to
+    declare when a param is expected to be an array of parameter hashes,
+    this new double array syntax is used to explicitly declare an array.
+    `expect` requires you to declare expected arrays in this way, and will
+    ignore arrays that are passed when, for example, `pet: [:name]` is used.
 
-*   Fix system test driver option initialization for non-headless browsers.
+    In order to preserve compatibility, `permit` does not adopt the new
+    double array syntax and is therefore more permissive about unexpected
+    types. Using `expect` everywhere is recommended.
+
+    We suggest replacing `params.require(:person).permit(:name, :age)`
+    with the direct replacement `params.expect(person: [:name, :age])`
+    to prevent external users from manipulating params to trigger 500
+    errors. A 400 error will be returned instead, using public/400.html
+
+    Usage of `params.require(:id)` should likewise be replaced with
+    `params.expect(:id)` which is designed to ensure that `params[:id]`
+    is a scalar and not an array or hash, also requiring the param.
+
+    ```ruby
+    # Before
+    User.find(params.require(:id)) # allows an array, altering behavior
+
+    # After
+    User.find(params.expect(:id)) # expect only returns non-blank permitted scalars (excludes Hash, Array, nil, "", etc)
+    ```
+
+    *Martin Emde*
+
+*   System Testing: Disable Chrome's search engine choice by default in system tests.
 
     *glaszig*
 
-*   `redirect_to.action_controller` notifications now include the `ActionDispatch::Request` in
-    their payloads as `:request`.
+*   Fix `Request#raw_post` raising `NoMethodError` when `rack.input` is `nil`.
 
-    *Austin Story*
+    *Hartley McGuire*
 
-*   `respond_to#any` no longer returns a response's Content-Type based on the
-    request format but based on the block given.
+*   Remove `racc` dependency by manually writing `ActionDispatch::Journey::Scanner`.
 
-    Example:
+    *Gannon McGibbon*
 
-    ```ruby
-      def my_action
-        respond_to do |format|
-          format.any { render(json: { foo: 'bar' }) }
-        end
-      end
+*   Speed up `ActionDispatch::Routing::Mapper::Scope#[]` by merging frame hashes.
 
-      get('my_action.csv')
-    ```
+    *Gannon McGibbon*
 
-    The previous behaviour was to respond with a `text/csv` Content-Type which
-    is inaccurate since a JSON response is being rendered.
+*   Allow bots to ignore `allow_browser`.
 
-    Now it correctly returns a `application/json` Content-Type.
+    *Matthew Nguyen*
 
-    *Edouard Chin*
-
-*   Replaces (back)slashes in failure screenshot image paths with dashes.
-
-    If a failed test case contained a slash or a backslash, a screenshot would be created in a
-    nested directory, causing issues with `tmp:clear`.
-
-    *Damir Zekic*
-
-*   Add `params.member?` to mimic Hash behavior.
-
-    *Younes Serraj*
-
-*   `process_action.action_controller` notifications now include the following in their payloads:
-
-    * `:request` - the `ActionDispatch::Request`
-    * `:response` - the `ActionDispatch::Response`
-
-    *George Claghorn*
-
-*   Updated `ActionDispatch::Request.remote_ip` setter to clear set the instance
-    `remote_ip` to `nil` before setting the header that the value is derived
-    from.
-
-    Fixes #37383.
-
-    *Norm Provost*
-
-*   `ActionController::Base.log_at` allows setting a different log level per request.
+*   Deprecate drawing routes with multiple paths to make routing faster.
+    You may use `with_options` or a loop to make drawing multiple paths easier.
 
     ```ruby
-    # Use the debug level if a particular cookie is set.
-    class ApplicationController < ActionController::Base
-      log_at :debug, if: -> { cookies[:debug] }
-    end
+    # Before
+    get "/users", "/other_path", to: "users#index"
+
+    # After
+    get "/users", to: "users#index"
+    get "/other_path", to: "users#index"
     ```
 
-    *George Claghorn*
+    *Gannon McGibbon*
 
-*   Allow system test screen shots to be taken more than once in
-    a test by prefixing the file name with an incrementing counter.
+*   Make `http_cache_forever` use `immutable: true`
 
-    Add an environment variable `RAILS_SYSTEM_TESTING_SCREENSHOT_HTML` to
-    enable saving of HTML during a screenshot in addition to the image.
-    This uses the same image name, with the extension replaced with `.html`
+    *Nate Matykiewicz*
 
-    *Tom Fakes*
+*   Add `config.action_dispatch.strict_freshness`.
 
-*   Add `Vary: Accept` header when using `Accept` header for response.
+    When set to `true`, the `ETag` header takes precedence over the `Last-Modified` header when both are present,
+    as specified by RFC 7232, Section 6.
 
-    For some requests like `/users/1`, Rails uses requests' `Accept`
-    header to determine what to return. And if we don't add `Vary`
-    in the response header, browsers might accidentally cache different
-    types of content, which would cause issues: e.g. javascript got displayed
-    instead of html content. This PR fixes these issues by adding `Vary: Accept`
-    in these types of requests. For more detailed problem description, please read:
+    Defaults to `false` to maintain compatibility with previous versions of Rails, but is enabled as part of
+    Rails 8.0 defaults.
 
-    https://github.com/rails/rails/pull/36213
+    *heka1024*
 
-    Fixes #25842.
-
-    *Stan Lo*
-
-*   Fix IntegrationTest `follow_redirect!` to follow redirection using the same HTTP verb when following
-    a 307 redirection.
-
-    *Edouard Chin*
-
-*   System tests require Capybara 3.26 or newer.
-
-    *George Claghorn*
-
-*   Reduced log noise handling ActionController::RoutingErrors.
-
-    *Alberto Fernández-Capel*
-
-*   Add DSL for configuring HTTP Feature Policy.
-
-    This new DSL provides a way to configure an HTTP Feature Policy at a
-    global or per-controller level. Full details of HTTP Feature Policy
-    specification and guidelines can be found at MDN:
-
-    https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Feature-Policy
-
-    Example global policy:
+*   Support `immutable` directive in Cache-Control
 
     ```ruby
-    Rails.application.config.feature_policy do |f|
-      f.camera      :none
-      f.gyroscope   :none
-      f.microphone  :none
-      f.usb         :none
-      f.fullscreen  :self
-      f.payment     :self, "https://secure.example.com"
-    end
+    expires_in 1.minute, public: true, immutable: true
+    # Cache-Control: public, max-age=60, immutable
     ```
 
-    Example controller level policy:
+    *heka1024*
+
+*   Add `:wasm_unsafe_eval` mapping for `content_security_policy`
 
     ```ruby
-    class PagesController < ApplicationController
-      feature_policy do |p|
-        p.geolocation "https://example.com"
-      end
-    end
+    # Before
+    policy.script_src "'wasm-unsafe-eval'"
+
+    # After
+    policy.script_src :wasm_unsafe_eval
     ```
 
-    *Jacob Bednarz*
+    *Joe Haig*
 
-*   Add the ability to set the CSP nonce only to the specified directives.
+*   Add `display_capture` and `keyboard_map` in `permissions_policy`
 
-    Fixes #35137.
+    *Cyril Blaecke*
 
-    *Yuji Yaginuma*
+*   Add `connect` route helper.
 
-*   Keep part when scope option has value.
+    *Samuel Williams*
 
-    When a route was defined within an optional scope, if that route didn't
-    take parameters the scope was lost when using path helpers. This commit
-    ensures scope is kept both when the route takes parameters or when it
-    doesn't.
-
-    Fixes #33219.
-
-    *Alberto Almagro*
-
-*   Added `deep_transform_keys` and `deep_transform_keys!` methods to ActionController::Parameters.
-
-    *Gustavo Gutierrez*
-
-*   Calling `ActionController::Parameters#transform_keys`/`!` without a block now returns
-    an enumerator for the parameters instead of the underlying hash.
-
-    *Eugene Kenny*
-
-*   Fix strong parameters blocks all attributes even when only some keys are invalid (non-numerical).
-    It should only block invalid key's values instead.
-
-    *Stan Lo*
-
-
-Please check [6-0-stable](https://github.com/rails/rails/blob/6-0-stable/actionpack/CHANGELOG.md) for previous changes.
+Please check [7-2-stable](https://github.com/rails/rails/blob/7-2-stable/actionpack/CHANGELOG.md) for previous changes.

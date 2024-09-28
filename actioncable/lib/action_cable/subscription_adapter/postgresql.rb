@@ -1,9 +1,10 @@
 # frozen_string_literal: true
 
-gem "pg", ">= 0.18", "< 2.0"
+# :markup: markdown
+
+gem "pg", "~> 1.1"
 require "pg"
-require "thread"
-require "digest/sha1"
+require "openssl"
 
 module ActionCable
   module SubscriptionAdapter
@@ -35,8 +36,8 @@ module ActionCable
 
       def with_subscriptions_connection(&block) # :nodoc:
         ar_conn = ActiveRecord::Base.connection_pool.checkout.tap do |conn|
-          # Action Cable is taking ownership over this database connection, and
-          # will perform the necessary cleanup tasks
+          # Action Cable is taking ownership over this database connection, and will
+          # perform the necessary cleanup tasks
           ActiveRecord::Base.connection_pool.remove(conn)
         end
         pg_conn = ar_conn.raw_connection
@@ -58,7 +59,7 @@ module ActionCable
 
       private
         def channel_identifier(channel)
-          channel.size > 63 ? Digest::SHA1.hexdigest(channel) : channel
+          channel.size > 63 ? OpenSSL::Digest::SHA1.hexdigest(channel) : channel
         end
 
         def listener

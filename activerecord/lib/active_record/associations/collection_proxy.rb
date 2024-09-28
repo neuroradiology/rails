@@ -2,6 +2,8 @@
 
 module ActiveRecord
   module Associations
+    # = Active Record Collection Proxy
+    #
     # Collection proxies in Active Record are middlemen between an
     # <tt>association</tt>, and its <tt>target</tt> result set.
     #
@@ -27,7 +29,7 @@ module ActiveRecord
     # is computed directly through SQL and does not trigger by itself the
     # instantiation of the actual post records.
     class CollectionProxy < Relation
-      def initialize(klass, association, **) #:nodoc:
+      def initialize(klass, association, **) # :nodoc:
         @association = association
         super klass
 
@@ -46,11 +48,12 @@ module ActiveRecord
       # Returns +true+ if the association has been loaded, otherwise +false+.
       #
       #   person.pets.loaded? # => false
-      #   person.pets
+      #   person.pets.records
       #   person.pets.loaded? # => true
       def loaded?
         @association.loaded?
       end
+      alias :loaded :loaded?
 
       ##
       # :method: select
@@ -93,12 +96,12 @@ module ActiveRecord
       # receive:
       #
       #   person.pets.select(:name).first.person_id
-      #   # => ActiveModel::MissingAttributeError: missing attribute: person_id
+      #   # => ActiveModel::MissingAttributeError: missing attribute 'person_id' for Pet
       #
-      # *Second:* You can pass a block so it can be used just like Array#select.
+      # *Second:* You can pass a block so it can be used just like <tt>Array#select</tt>.
       # This builds an array of objects from the database for the scope,
       # converting them into an array and iterating through them using
-      # Array#select.
+      # <tt>Array#select</tt>.
       #
       #   person.pets.select { |pet| /oo/.match?(pet.name) }
       #   # => [
@@ -107,7 +110,7 @@ module ActiveRecord
       #   #    ]
 
       # Finds an object in the collection responding to the +id+. Uses the same
-      # rules as ActiveRecord::Base.find. Returns ActiveRecord::RecordNotFound
+      # rules as ActiveRecord::FinderMethods.find. Returns ActiveRecord::RecordNotFound
       # error if the object cannot be found.
       #
       #   class Person < ActiveRecord::Base
@@ -217,7 +220,7 @@ module ActiveRecord
       # :call-seq:
       #   third_to_last()
       #
-      # Same as #first except returns only the third-to-last record.
+      # Same as #last except returns only the third-to-last record.
 
       ##
       # :method: second_to_last
@@ -225,7 +228,7 @@ module ActiveRecord
       # :call-seq:
       #   second_to_last()
       #
-      # Same as #first except returns only the second-to-last record.
+      # Same as #last except returns only the second-to-last record.
 
       # Returns the last record, or the last +n+ records, from the collection.
       # If the collection is empty, the first form returns +nil+, and the second
@@ -259,7 +262,7 @@ module ActiveRecord
       end
 
       # Gives a record (or N records if a parameter is supplied) from the collection
-      # using the same rules as <tt>ActiveRecord::Base.take</tt>.
+      # using the same rules as ActiveRecord::FinderMethods.take.
       #
       #   class Person < ActiveRecord::Base
       #     has_many :pets
@@ -381,7 +384,7 @@ module ActiveRecord
       #   # => [#<Pet id: 2, name: "Puff", group: "celebrities", person_id: 1>]
       #
       # If the supplied array has an incorrect association type, it raises
-      # an <tt>ActiveRecord::AssociationTypeMismatch</tt> error:
+      # an ActiveRecord::AssociationTypeMismatch error:
       #
       #   person.pets.replace(["doo", "ggie", "gaga"])
       #   # => ActiveRecord::AssociationTypeMismatch: Pet expected, got String
@@ -474,7 +477,7 @@ module ActiveRecord
 
       # Deletes the records of the collection directly from the database
       # ignoring the +:dependent+ option. Records are instantiated and it
-      # invokes +before_remove+, +after_remove+ , +before_destroy+ and
+      # invokes +before_remove+, +after_remove+, +before_destroy+, and
       # +after_destroy+ callbacks.
       #
       #   class Person < ActiveRecord::Base
@@ -812,7 +815,7 @@ module ActiveRecord
       # to <tt>collection.size.zero?</tt>. If the collection has not been loaded,
       # it is equivalent to <tt>!collection.exists?</tt>. If the collection has
       # not already been loaded and you are going to fetch the records anyway it
-      # is better to check <tt>collection.length.zero?</tt>.
+      # is better to check <tt>collection.load.empty?</tt>.
       #
       #   class Person < ActiveRecord::Base
       #     has_many :pets
@@ -847,6 +850,11 @@ module ActiveRecord
       #   person.pets << Pet.new(name: 'Snoop')
       #   person.pets.count # => 1
       #   person.pets.any?  # => true
+      #
+      # Calling it without a block when the collection is not yet
+      # loaded is equivalent to <tt>collection.exists?</tt>.
+      # If you're going to load the collection anyway, it is better
+      # to call <tt>collection.load.any?</tt> to avoid an extra query.
       #
       # You can also pass a +block+ to define criteria. The behavior
       # is the same, it returns true if the collection based on the
@@ -920,11 +928,24 @@ module ActiveRecord
         !!@association.include?(record)
       end
 
+      # Returns the association object for the collection.
+      #
+      #   class Person < ActiveRecord::Base
+      #     has_many :pets
+      #   end
+      #
+      #   person.pets.proxy_association
+      #   # => #<ActiveRecord::Associations::HasManyAssociation owner="#<Person:0x00>">
+      #
+      # Returns the same object as <tt>person.association(:pets)</tt>,
+      # allowing you to make calls like <tt>person.pets.proxy_association.owner</tt>.
+      #
+      # See Associations::ClassMethods@Association+extensions for more.
       def proxy_association
         @association
       end
 
-      # Returns a <tt>Relation</tt> object for the records in this association
+      # Returns a Relation object for the records in this association
       def scope
         @scope ||= @association.scope
       end
@@ -949,10 +970,13 @@ module ActiveRecord
       #   person.pets == other
       #   # => true
       #
+      #
+      # Note that unpersisted records can still be seen as equal:
+      #
       #   other = [Pet.new(id: 1), Pet.new(id: 2)]
       #
       #   person.pets == other
-      #   # => false
+      #   # => true
       def ==(other)
         load_target == other
       end
@@ -1086,9 +1110,19 @@ module ActiveRecord
       end
 
       def reset_scope # :nodoc:
-        @offsets = {}
+        @offsets = @take = nil
         @scope = nil
         self
+      end
+
+      def inspect # :nodoc:
+        load_target if find_from_target?
+        super
+      end
+
+      def pretty_print(pp) # :nodoc:
+        load_target if find_from_target?
+        super
       end
 
       delegate_methods = [
@@ -1096,7 +1130,9 @@ module ActiveRecord
         SpawnMethods,
       ].flat_map { |klass|
         klass.public_instance_methods(false)
-      } - self.public_instance_methods(false) - [:select] + [:scoping, :values]
+      } - self.public_instance_methods(false) - [:select] + [
+        :scoping, :values, :insert, :insert_all, :insert!, :insert_all!, :upsert, :upsert_all, :load_async
+      ]
 
       delegate(*delegate_methods, to: :scope)
 

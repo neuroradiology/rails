@@ -1,50 +1,53 @@
 # frozen_string_literal: true
 
+# :markup: markdown
+
 module ActionDispatch
   module Journey # :nodoc:
     class Router # :nodoc:
       class Utils # :nodoc:
         # Normalizes URI path.
         #
-        # Strips off trailing slash and ensures there is a leading slash.
-        # Also converts downcase URL encoded string to uppercase.
+        # Strips off trailing slash and ensures there is a leading slash. Also converts
+        # downcase URL encoded string to uppercase.
         #
-        #   normalize_path("/foo")  # => "/foo"
-        #   normalize_path("/foo/") # => "/foo"
-        #   normalize_path("foo")   # => "/foo"
-        #   normalize_path("")      # => "/"
-        #   normalize_path("/%ab")  # => "/%AB"
+        #     normalize_path("/foo")  # => "/foo"
+        #     normalize_path("/foo/") # => "/foo"
+        #     normalize_path("foo")   # => "/foo"
+        #     normalize_path("")      # => "/"
+        #     normalize_path("/%ab")  # => "/%AB"
         def self.normalize_path(path)
           path ||= ""
           encoding = path.encoding
           path = +"/#{path}"
           path.squeeze!("/")
-          path.sub!(%r{/+\Z}, "")
-          path.gsub!(/(%[a-f0-9]{2})/) { $1.upcase }
-          path = +"/" if path == ""
+
+          unless path == "/"
+            path.delete_suffix!("/")
+            path.gsub!(/(%[a-f0-9]{2})/) { $1.upcase }
+          end
+
           path.force_encoding(encoding)
-          path
         end
 
-        # URI path and fragment escaping
-        # https://tools.ietf.org/html/rfc3986
+        # URI path and fragment escaping https://tools.ietf.org/html/rfc3986
         class UriEncoder # :nodoc:
           ENCODE   = "%%%02X"
           US_ASCII = Encoding::US_ASCII
           UTF_8    = Encoding::UTF_8
           EMPTY    = (+"").force_encoding(US_ASCII).freeze
-          DEC2HEX  = (0..255).to_a.map { |i| ENCODE % i }.map { |s| s.force_encoding(US_ASCII) }
+          DEC2HEX  = (0..255).map { |i| (ENCODE % i).force_encoding(US_ASCII) }
 
           ALPHA = "a-zA-Z"
           DIGIT = "0-9"
           UNRESERVED = "#{ALPHA}#{DIGIT}\\-\\._~"
           SUB_DELIMS = "!\\$&'\\(\\)\\*\\+,;="
 
-          ESCAPED  = /%[a-zA-Z0-9]{2}/.freeze
+          ESCAPED  = /%[a-zA-Z0-9]{2}/
 
-          FRAGMENT = /[^#{UNRESERVED}#{SUB_DELIMS}:@\/\?]/.freeze
-          SEGMENT  = /[^#{UNRESERVED}#{SUB_DELIMS}:@]/.freeze
-          PATH     = /[^#{UNRESERVED}#{SUB_DELIMS}:@\/]/.freeze
+          FRAGMENT = /[^#{UNRESERVED}#{SUB_DELIMS}:@\/?]/
+          SEGMENT  = /[^#{UNRESERVED}#{SUB_DELIMS}:@]/
+          PATH     = /[^#{UNRESERVED}#{SUB_DELIMS}:@\/]/
 
           def escape_fragment(fragment)
             escape(fragment, FRAGMENT)
@@ -91,8 +94,8 @@ module ActionDispatch
 
         # Replaces any escaped sequences with their unescaped representations.
         #
-        #   uri = "/topics?title=Ruby%20on%20Rails"
-        #   unescape_uri(uri)  #=> "/topics?title=Ruby on Rails"
+        #     uri = "/topics?title=Ruby%20on%20Rails"
+        #     unescape_uri(uri)  #=> "/topics?title=Ruby on Rails"
         def self.unescape_uri(uri)
           ENCODER.unescape_uri(uri)
         end

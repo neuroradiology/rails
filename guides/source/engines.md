@@ -14,7 +14,7 @@ After reading this guide, you will know:
 * How to build features for the engine.
 * How to hook the engine into an application.
 * How to override engine functionality in the application.
-* Avoid loading Rails frameworks with Load and Configuration Hooks
+* How to avoid loading Rails frameworks with Load and Configuration Hooks.
 
 --------------------------------------------------------------------------------
 
@@ -112,7 +112,7 @@ that provides the following:
 
 The `--mountable` option will add to the `--full` option:
 
-  * Asset manifest files (`application.js` and `application.css`)
+  * Asset manifest files (`blorgh_manifest.js` and `application.css`)
   * A namespaced `ApplicationController` stub
   * A namespaced `ApplicationHelper` stub
   * A layout view template for the engine
@@ -151,7 +151,7 @@ When you include the engine into an application later on, you will do so with
 this line in the Rails application's `Gemfile`:
 
 ```ruby
-gem 'blorgh', path: 'engines/blorgh'
+gem "blorgh", path: "engines/blorgh"
 ```
 
 Don't forget to run `bundle install` as usual. By specifying it as a gem within
@@ -207,8 +207,8 @@ instead be namespaced and called `Blorgh::Article`. In addition, the table for t
 model is namespaced, becoming `blorgh_articles`, rather than simply `articles`.
 Similar to the model namespacing, a controller called `ArticlesController` becomes
 `Blorgh::ArticlesController` and the views for that controller will not be at
-`app/views/articles`, but `app/views/blorgh/articles` instead. Mailers are namespaced
-as well.
+`app/views/articles`, but `app/views/blorgh/articles` instead. Mailers, jobs
+and helpers are namespaced as well.
 
 Finally, routes will also be isolated within the engine. This is one of the most
 important parts about namespacing, and is discussed later in the
@@ -238,50 +238,12 @@ NOTE: The `ApplicationController` class inside an engine is named just like a
 Rails application in order to make it easier for you to convert your
 applications into engines.
 
-NOTE: Because of the way that Ruby does constant lookup you may run into a situation
-where your engine controller is inheriting from the main application controller and
-not your engine's application controller. Ruby is able to resolve the `ApplicationController` constant, and therefore the autoloading mechanism is not triggered. See the section [When Constants Aren't Missed](autoloading_and_reloading_constants.html#when-constants-aren-t-missed) of the [Autoloading and Reloading Constants](autoloading_and_reloading_constants.html) guide for further details. The best way to prevent this from
-happening is to use `require_dependency` to ensure that the engine's application
-controller is loaded. For example:
-
-``` ruby
-# app/controllers/blorgh/articles_controller.rb:
-require_dependency "blorgh/application_controller"
-
-module Blorgh
-  class ArticlesController < ApplicationController
-    ...
-  end
-end
-```
-
-WARNING: Don't use `require` because it will break the automatic reloading of classes
-in the development environment - using `require_dependency` ensures that classes are
-loaded and unloaded in the correct manner.
-
-Within the `app/helpers` directory there is a `blorgh` directory that
-contains a file called `application_helper.rb`. This file will provide any
-common functionality for the helpers of the engine. The `blorgh` directory
-is where the other helpers for the engine will go. By placing them within
-this namespaced directory, you prevent them from possibly clashing with
-identically-named route helpers within other engines or even within the
-application.
-
-Within the `app/jobs` directory there is a `blorgh` directory that
-contains a file called `application_job.rb`. This file will provide any
-common functionality for the jobs of the engine. The `blorgh` directory
-is where the other jobs for the engine will go. By placing them within
-this namespaced directory, you prevent them from possibly clashing with
-identically-named jobs within other engines or even within the
-application.
-
-Within the `app/mailers` directory there is a `blorgh` directory that
-contains a file called `application_mailer.rb`. This file will provide any
-common functionality for the mailers of the engine. The `blorgh` directory
-is where the other mailers for the engine will go. By placing them within
-this namespaced directory, you prevent them from possibly clashing with
-identically-named mailers within other engines or even within the
-application.
+Just like for `app/controllers`, you will find a `blorgh` subdirectory under
+the `app/helpers`, `app/jobs`, `app/mailers` and `app/models` directories
+containing the associated `application_*.rb` file for gathering common
+functionalities. By placing your files under this subdirectory and namespacing
+your objects, you prevent them from possibly clashing with identically-named
+elements within other engines or even within the application.
 
 Lastly, the `app/views` directory contains a `layouts` folder, which contains a
 file at `blorgh/application.html.erb`. This file allows you to specify a layout
@@ -367,17 +329,14 @@ create      app/views/blorgh/articles/edit.html.erb
 create      app/views/blorgh/articles/show.html.erb
 create      app/views/blorgh/articles/new.html.erb
 create      app/views/blorgh/articles/_form.html.erb
+create      app/views/blorgh/articles/_article.html.erb
+invoke    resource_route
 invoke    test_unit
 create      test/controllers/blorgh/articles_controller_test.rb
 create      test/system/blorgh/articles_test.rb
 invoke    helper
 create      app/helpers/blorgh/articles_helper.rb
 invoke      test_unit
-invoke  assets
-invoke    css
-create      app/assets/stylesheets/blorgh/articles.css
-invoke  css
-create    app/assets/stylesheets/scaffold.css
 ```
 
 The first thing that the scaffold generator does is invoke the `active_record`
@@ -422,7 +381,7 @@ class is defined within the `Blorgh` module:
 ```ruby
 module Blorgh
   class ArticlesController < ApplicationController
-    ...
+    # ...
   end
 end
 ```
@@ -435,15 +394,13 @@ The helper inside `app/helpers/blorgh/articles_helper.rb` is also namespaced:
 ```ruby
 module Blorgh
   module ArticlesHelper
-    ...
+    # ...
   end
 end
 ```
 
 This helps prevent conflicts with any other engine or application that may have
 an article resource as well.
-
-Finally, the assets for this resource are generated in one file: `app/assets/stylesheets/blorgh/articles.css`. You'll see how to use these a little later.
 
 You can see what the engine has so far by running `bin/rails db:migrate` at the root
 of our engine to run the migration generated by the scaffold generator, and then
@@ -456,8 +413,8 @@ If you'd rather play around in the console, `bin/rails console` will also work j
 like a Rails application. Remember: the `Article` model is namespaced, so to
 reference it you must call it as `Blorgh::Article`.
 
-```ruby
->> Blorgh::Article.find(1)
+```irb
+irb> Blorgh::Article.find(1)
 => #<Blorgh::Article id: 1 ...>
 ```
 
@@ -482,7 +439,7 @@ commenting functionality as well. To do this, you'll need to generate a comment
 model, a comment controller, and then modify the articles scaffold to display
 comments and allow people to create new ones.
 
-From the application root, run the model generator. Tell it to generate a
+From the engine root, run the model generator. Tell it to generate a
 `Comment` model, with the related table having two columns: an `article_id` integer
 and `text` text column.
 
@@ -555,10 +512,10 @@ directory at `app/views/blorgh/comments` and in it a new file called
 
 ```html+erb
 <h3>New comment</h3>
-<%= form_with model: [@article, @article.comments.build], local: true do |form| %>
+<%= form_with model: [@article, @article.comments.build] do |form| %>
   <p>
     <%= form.label :text %><br>
-    <%= form.text_area :text %>
+    <%= form.textarea :text %>
   </p>
   <%= form.submit %>
 <% end %>
@@ -578,7 +535,7 @@ end
 This creates a nested route for the comments, which is what the form requires.
 
 The route now exists, but the controller that this route goes to does not. To
-create it, run this command from the application root:
+create it, run this command from the engine root:
 
 ```bash
 $ bin/rails generate controller comments
@@ -595,9 +552,6 @@ create    test/controllers/blorgh/comments_controller_test.rb
 invoke  helper
 create    app/helpers/blorgh/comments_helper.rb
 invoke    test_unit
-invoke  assets
-invoke    css
-create      app/assets/stylesheets/blorgh/comments.css
 ```
 
 The form will be making a `POST` request to `/articles/:article_id/comments`, which
@@ -615,7 +569,7 @@ end
 
 private
   def comment_params
-    params.require(:comment).permit(:text)
+    params.expect(comment: [:text])
   end
 ```
 
@@ -674,14 +628,14 @@ Usually, specifying the engine inside the `Gemfile` would be done by specifying 
 as a normal, everyday gem.
 
 ```ruby
-gem 'devise'
+gem "devise"
 ```
 
 However, because you are developing the `blorgh` engine on your local machine,
 you will need to specify the `:path` option in your `Gemfile`:
 
 ```ruby
-gem 'blorgh', path: 'engines/blorgh'
+gem "blorgh", path: "engines/blorgh"
 ```
 
 Then run `bundle` to install the gem.
@@ -725,12 +679,24 @@ If you have multiple engines that need migrations copied over, use
 $ bin/rails railties:install:migrations
 ```
 
+You can specify a custom path in the source engine for the migrations by specifying MIGRATIONS_PATH.
+
+```bash
+$ bin/rails railties:install:migrations MIGRATIONS_PATH=db_blourgh
+```
+
+If you have multiple databases you can also specify the target database by specifying DATABASE.
+
+```bash
+$ bin/rails railties:install:migrations DATABASE=animals
+```
+
 This command, when run for the first time, will copy over all the migrations
 from the engine. When run the next time, it will only copy over migrations that
 haven't been copied over already. The first run for this command will output
 something such as this:
 
-```bash
+```
 Copied migration [timestamp_1]_create_blorgh_articles.blorgh.rb from blorgh
 Copied migration [timestamp_2]_create_blorgh_comments.blorgh.rb from blorgh
 ```
@@ -810,7 +776,7 @@ permit the new form parameter:
 
 ```ruby
 def article_params
-  params.require(:article).permit(:title, :text, :author_name)
+  params.expect(article: [:title, :text, :author_name])
 end
 ```
 
@@ -880,12 +846,12 @@ an author - represented by a record in the `users` table - with an article,
 represented by the `blorgh_articles` table from the engine.
 
 Finally, the author's name should be displayed on the article's page. Add this code
-above the "Title" output inside `app/views/blorgh/articles/show.html.erb`:
+above the "Title" output inside `app/views/blorgh/articles/_article.html.erb`:
 
 ```html+erb
 <p>
-  <b>Author:</b>
-  <%= @article.author.name %>
+  <strong>Author:</strong>
+  <%= article.author.name %>
 </p>
 ```
 
@@ -1059,7 +1025,7 @@ module Blorgh
 
     def test_index
       get foos_url
-      ...
+      # ...
     end
   end
 end
@@ -1081,7 +1047,7 @@ module Blorgh
 
     def test_index
       get foos_url
-      ...
+      # ...
     end
   end
 end
@@ -1104,20 +1070,19 @@ main Rails application.
 
 Engine models and controllers can be reopened by the parent application to extend or decorate them.
 
-Overrides may be organized in a dedicated directory `app/overrides` that is preloaded in a `to_prepare` callback.
-
-In `zeitwerk` mode you'd do this:
+Overrides may be organized in a dedicated directory `app/overrides`, ignored by the autoloader, and preloaded in a `to_prepare` callback:
 
 ```ruby
 # config/application.rb
 module MyApp
   class Application < Rails::Application
-    ...
+    # ...
 
     overrides = "#{Rails.root}/app/overrides"
     Rails.autoloaders.main.ignore(overrides)
+
     config.to_prepare do
-      Dir.glob("#{overrides}/**/*_override.rb").each do |override|
+      Dir.glob("#{overrides}/**/*_override.rb").sort.each do |override|
         load override
       end
     end
@@ -1125,24 +1090,7 @@ module MyApp
 end
 ```
 
-and in `classic` mode this:
-
-```ruby
-# config/application.rb
-module MyApp
-  class Application < Rails::Application
-    ...
-
-    config.to_prepare do
-      Dir.glob("#{Rails.root}/app/overrides/**/*_override.rb").each do |override|
-        require_dependency override
-      end
-    end
-  end
-end
-```
-
-#### Reopening existing classes using `class_eval`
+#### Reopening Existing Classes Using `class_eval`
 
 For example, in order to override the engine model
 
@@ -1150,11 +1098,7 @@ For example, in order to override the engine model
 # Blorgh/app/models/blorgh/article.rb
 module Blorgh
   class Article < ApplicationRecord
-    has_many :comments
-
-    def summary
-      "#{title}"
-    end
+    # ...
   end
 end
 ```
@@ -1164,19 +1108,13 @@ you just create a file that _reopens_ that class:
 ```ruby
 # MyApp/app/overrides/models/blorgh/article_override.rb
 Blorgh::Article.class_eval do
-  def time_since_created
-    Time.current - created_at
-  end
-
-  def summary
-    "#{title} - #{truncate(text)}"
-  end
+  # ...
 end
 ```
 
 It is very important that the override _reopens_ the class or module. Using the `class` or `module` keywords would define them if they were not already in memory, which would be incorrect because the definition lives in the engine. Using `class_eval` as shown above ensures you are reopening.
 
-#### Reopening existing classes using ActiveSupport::Concern
+#### Reopening Existing Classes Using ActiveSupport::Concern
 
 Using `Class#class_eval` is great for simple adjustments, but for more complex
 class modifications, you might want to consider using [`ActiveSupport::Concern`]
@@ -1217,9 +1155,9 @@ end
 module Blorgh::Concerns::Models::Article
   extend ActiveSupport::Concern
 
-  # 'included do' causes the included code to be evaluated in the
-  # context where it is included (article.rb), rather than being
-  # executed in the module's context (blorgh/concerns/models/article).
+  # `included do` causes the block to be evaluated in the context
+  # in which the module is included (i.e. Blorgh::Article),
+  # rather than in the module itself.
   included do
     attr_accessor :author_name
     belongs_to :author, class_name: "User"
@@ -1243,6 +1181,12 @@ module Blorgh::Concerns::Models::Article
   end
 end
 ```
+
+### Autoloading and Engines
+
+Please check the [Autoloading and Reloading Constants](autoloading_and_reloading_constants.html#autoloading-and-engines)
+guide for more information about autoloading and engines.
+
 
 ### Overriding Views
 
@@ -1344,7 +1288,7 @@ which case the application's asset would take precedence and the engine's one
 would be ignored.
 
 Imagine that you did have an asset located at
-`app/assets/stylesheets/blorgh/style.css` To include this asset inside an
+`app/assets/stylesheets/blorgh/style.css`. To include this asset inside an
 application, just use `stylesheet_link_tag` and reference the asset as if it
 were inside the engine:
 
@@ -1355,16 +1299,16 @@ were inside the engine:
 You can also specify these assets as dependencies of other assets using Asset
 Pipeline require statements in processed files:
 
-```
+```css
 /*
  *= require blorgh/style
-*/
+ */
 ```
 
 INFO. Remember that in order to use languages like Sass or CoffeeScript, you
 should add the relevant library to your engine's `.gemspec`.
 
-### Separate Assets & Precompiling
+### Separate Assets and Precompiling
 
 There are some situations where your engine's assets are not required by the
 host application. For example, say that you've created an admin functionality
@@ -1417,152 +1361,11 @@ required, you should require them before the engine's initialization. For
 example:
 
 ```ruby
-require 'other_engine/engine'
-require 'yet_another_engine/engine'
+require "other_engine/engine"
+require "yet_another_engine/engine"
 
 module MyEngine
   class Engine < ::Rails::Engine
-  end
-end
-```
-
-Load and Configuration Hooks
-----------------------------
-
-Rails code can often be referenced on load of an application. Rails is responsible for the load order of these frameworks, so when you load frameworks, such as `ActiveRecord::Base`, prematurely you are violating an implicit contract your application has with Rails. Moreover, by loading code such as `ActiveRecord::Base` on boot of your application you are loading entire frameworks which may slow down your boot time and could cause conflicts with load order and boot of your application.
-
-Load and configuration hooks are the API that allow you to hook into this initialization process without violating the load contract with Rails. This will also mitigate boot performance degradation and avoid conflicts.
-
-### Avoid loading Rails Frameworks
-
-Since Ruby is a dynamic language, some code will cause different Rails frameworks to load. Take this snippet for instance:
-
-```ruby
-ActiveRecord::Base.include(MyActiveRecordHelper)
-```
-
-This snippet means that when this file is loaded, it will encounter `ActiveRecord::Base`. This encounter causes Ruby to look for the definition of that constant and will require it. This causes the entire Active Record framework to be loaded on boot.
-
-`ActiveSupport.on_load` is a mechanism that can be used to defer the loading of code until it is actually needed. The snippet above can be changed to:
-
-```ruby
-ActiveSupport.on_load(:active_record) do
-  include MyActiveRecordHelper
-end
-```
-
-This new snippet will only include `MyActiveRecordHelper` when `ActiveRecord::Base` is loaded.
-
-### When are Hooks called?
-
-In the Rails framework these hooks are called when a specific library is loaded. For example, when `ActionController::Base` is loaded, the `:action_controller_base` hook is called. This means that all `ActiveSupport.on_load` calls with `:action_controller_base` hooks will be called in the context of `ActionController::Base` (that means `self` will be an `ActionController::Base`).
-
-### Modifying Code to use Load Hooks
-
-Modifying code is generally straightforward. If you have a line of code that refers to a Rails framework such as `ActiveRecord::Base` you can wrap that code in a load hook.
-
-**Modifying calls to `include`**
-
-```ruby
-ActiveRecord::Base.include(MyActiveRecordHelper)
-```
-
-becomes
-
-```ruby
-ActiveSupport.on_load(:active_record) do
-  # self refers to ActiveRecord::Base here,
-  # so we can call .include
-  include MyActiveRecordHelper
-end
-```
-
-**Modifying calls to `prepend`**
-
-```ruby
-ActionController::Base.prepend(MyActionControllerHelper)
-```
-
-becomes
-
-```ruby
-ActiveSupport.on_load(:action_controller_base) do
-  # self refers to ActionController::Base here,
-  # so we can call .prepend
-  prepend MyActionControllerHelper
-end
-```
-
-**Modifying calls to class methods**
-
-```ruby
-ActiveRecord::Base.include_root_in_json = true
-```
-
-becomes
-
-```ruby
-ActiveSupport.on_load(:active_record) do
-  # self refers to ActiveRecord::Base here
-  self.include_root_in_json = true
-end
-```
-
-### Available Load Hooks
-
-These are the load hooks you can use in your own code. To hook into the initialization process of one of the following classes use the available hook.
-
-| Class                                | Hook                                 |
-| -------------------------------------| ------------------------------------ |
-| `ActionCable`                        | `action_cable`                       |
-| `ActionCable::Channel::Base`         | `action_cable_channel`               |
-| `ActionCable::Connection::Base`      | `action_cable_connection`            |
-| `ActionCable::Connection::TestCase`  | `action_cable_connection_test_case`  |
-| `ActionController::API`              | `action_controller_api`              |
-| `ActionController::API`              | `action_controller`                  |
-| `ActionController::Base`             | `action_controller_base`             |
-| `ActionController::Base`             | `action_controller`                  |
-| `ActionController::TestCase`         | `action_controller_test_case`        |
-| `ActionDispatch::IntegrationTest`    | `action_dispatch_integration_test`   |
-| `ActionDispatch::Response`           | `action_dispatch_response`           |
-| `ActionDispatch::Request`            | `action_dispatch_request`            |
-| `ActionDispatch::SystemTestCase`     | `action_dispatch_system_test_case`   |
-| `ActionMailbox::Base`                | `action_mailbox`                     |
-| `ActionMailbox::InboundEmail`        | `action_mailbox_inbound_email`       |
-| `ActionMailbox::TestCase`            | `action_mailbox_test_case`           |
-| `ActionMailer::Base`                 | `action_mailer`                      |
-| `ActionMailer::TestCase`             | `action_mailer_test_case`            |
-| `ActionText::Content`                | `action_text_content`                |
-| `ActionText::RichText`               | `action_text_rich_text`              |
-| `ActionView::Base`                   | `action_view`                        |
-| `ActionView::TestCase`               | `action_view_test_case`              |
-| `ActiveJob::Base`                    | `active_job`                         |
-| `ActiveJob::TestCase`                | `active_job_test_case`               |
-| `ActiveRecord::Base`                 | `active_record`                      |
-| `ActiveStorage::Attachment`          | `active_storage_attachment`          |
-| `ActiveStorage::Blob`                | `active_storage_blob`                |
-| `ActiveSupport::TestCase`            | `active_support_test_case`           |
-| `i18n`                               | `i18n`                               |
-
-### Available Configuration Hooks
-
-Configuration hooks do not hook into any particular framework, but instead they run in context of the entire application.
-
-| Hook                   | Use Case                                                                           |
-| ---------------------- | ---------------------------------------------------------------------------------- |
-| `before_configuration` | First configurable block to run. Called before any initializers are run.           |
-| `before_initialize`    | Second configurable block to run. Called before frameworks initialize.             |
-| `before_eager_load`    | Third configurable block to run. Does not run if `config.eager_load` set to false. |
-| `after_initialize`     | Last configurable block to run. Called after frameworks initialize.                |
-
-Configuration hooks can be called in the Engine class.
-
-```ruby
-module Blorgh
-  class Engine < ::Rails::Engine
-    config.before_configuration do
-      puts 'I am called before any initializers'
-    end
   end
 end
 ```

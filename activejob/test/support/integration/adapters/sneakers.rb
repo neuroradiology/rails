@@ -17,8 +17,8 @@ module SneakersJobsManager
                         pid_path: Rails.root.join("tmp/sneakers.pid").to_s,
                         log: Rails.root.join("log/sneakers.log").to_s
     unless can_run?
-      puts "Cannot run integration tests for sneakers. To be able to run integration tests for sneakers you need to install and start rabbitmq.\n"
-      status = ENV["CI"] ? false : true
+      puts "Cannot run integration tests for Sneakers. To be able to run integration tests for Sneakers you need to install and start RabbitMQ.\n"
+      status = ENV["BUILDKITE"] ? false : true
       exit status
     end
   end
@@ -31,7 +31,7 @@ module SneakersJobsManager
     @pid = fork do
       queues = %w(integration_tests)
       workers = queues.map do |q|
-        worker_klass = "ActiveJobWorker" + Digest::MD5.hexdigest(q)
+        worker_klass = "ActiveJobWorker" + OpenSSL::Digest::MD5.hexdigest(q)
         Sneakers.const_set(worker_klass, Class.new(ActiveJob::QueueAdapters::SneakersAdapter::JobWrapper) do
           from_queue q
         end)

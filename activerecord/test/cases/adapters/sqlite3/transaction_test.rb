@@ -10,7 +10,7 @@ class SQLite3TransactionTest < ActiveRecord::SQLite3TestCase
   end
 
   test "shared_cached? is false when cache-mode is disabled" do
-    flags =::SQLite3::Constants::Open::READWRITE | SQLite3::Constants::Open::CREATE
+    flags = ::SQLite3::Constants::Open::READWRITE | SQLite3::Constants::Open::CREATE
 
     with_connection(flags: flags) do |conn|
       assert_not_predicate(conn, :shared_cache?)
@@ -59,6 +59,7 @@ class SQLite3TransactionTest < ActiveRecord::SQLite3TestCase
 
   test "reset the read_uncommitted PRAGMA when a transaction is rolled back" do
     with_connection(flags: shared_cache_flags) do |conn|
+      conn.connect!
       conn.transaction(joinable: false, isolation: :read_uncommitted) do
         assert_not(read_uncommitted?(conn))
         conn.transaction_manager.materialize_transactions
@@ -73,6 +74,7 @@ class SQLite3TransactionTest < ActiveRecord::SQLite3TestCase
 
   test "reset the read_uncommitted PRAGMA when a transaction is committed" do
     with_connection(flags: shared_cache_flags) do |conn|
+      conn.connect!
       conn.transaction(joinable: false, isolation: :read_uncommitted) do
         assert_not(read_uncommitted?(conn))
         conn.transaction_manager.materialize_transactions
@@ -85,8 +87,9 @@ class SQLite3TransactionTest < ActiveRecord::SQLite3TestCase
 
   test "set the read_uncommitted PRAGMA to its previous value" do
     with_connection(flags: shared_cache_flags) do |conn|
+      conn.connect!
       conn.transaction(joinable: false, isolation: :read_uncommitted) do
-        conn.instance_variable_get(:@connection).read_uncommitted = true
+        conn.instance_variable_get(:@raw_connection).read_uncommitted = true
         assert(read_uncommitted?(conn))
         conn.transaction_manager.materialize_transactions
         assert(read_uncommitted?(conn))
@@ -98,19 +101,23 @@ class SQLite3TransactionTest < ActiveRecord::SQLite3TestCase
 
   private
     def read_uncommitted?(conn)
-      conn.instance_variable_get(:@connection).get_first_value("PRAGMA read_uncommitted") != 0
+      conn.instance_variable_get(:@raw_connection).get_first_value("PRAGMA read_uncommitted") != 0
     end
 
     def shared_cache_flags
-      ::SQLite3::Constants::Open::READWRITE | SQLite3::Constants::Open::CREATE | ::SQLite3::Constants::Open::SHAREDCACHE | ::SQLite3::Constants::Open::URI
+      ::SQLite3::Constants::Open::READWRITE | SQLite3::Constants::Open::CREATE | ::SQLite3::Constants::Open::SHAREDCACHE
     end
 
     def with_connection(options = {})
-      db_config = ActiveRecord::Base.configurations.configs_for(env_name: "arunit", name: "primary")
-      conn_options = options.reverse_merge(
-        database: in_memory_db? ? "test/db/file::memory:" : db_config.database
-      )
-      conn = ActiveRecord::Base.sqlite3_connection(conn_options)
+      options = options.dup
+      if in_memory_db?
+        options[:database] ||= "file::memory:"
+        options[:flags] = options[:flags].to_i | ::SQLite3::Constants::Open::URI | ::SQLite3::Constants::Open::READWRITE
+      else
+        db_config = ActiveRecord::Base.configurations.configs_for(env_name: "arunit", name: "primary")
+        options[:database] ||= db_config.database
+      end
+      conn = ActiveRecord::ConnectionAdapters::SQLite3Adapter.new(options)
 
       yield(conn)
     ensure
