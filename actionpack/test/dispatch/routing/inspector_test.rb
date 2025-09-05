@@ -41,6 +41,7 @@ module ActionDispatch
           "         blog      /blog                    Blog::Engine",
           "",
           "Routes for Blog::Engine:",
+          "Prefix Verb URI Pattern     Controller#Action",
           "  cart GET  /cart(.:format) cart#show"
         ], output
       end
@@ -163,7 +164,7 @@ module ActionDispatch
 
         assert_equal [
           "Prefix Verb URI Pattern                            Controller#Action",
-          "       GET  /:controller(/:action(/:id))(.:format) :controller#:action {:id=>/\\d+/}"
+          "       GET  /:controller(/:action(/:id))(.:format) :controller#:action #{{ id: /\d+/ }}"
         ], output
       end
 
@@ -174,7 +175,7 @@ module ActionDispatch
 
         assert_equal [
           "Prefix Verb URI Pattern           Controller#Action",
-          '       GET  /photos/:id(.:format) photos#show {:format=>"jpg"}'
+          "       GET  /photos/:id(.:format) photos#show #{{ format: "jpg" }}"
         ], output
       end
 
@@ -185,7 +186,7 @@ module ActionDispatch
 
         assert_equal [
           "Prefix Verb URI Pattern           Controller#Action",
-          "       GET  /photos/:id(.:format) photos#show {:id=>/[A-Z]\\d{5}/}"
+          "       GET  /photos/:id(.:format) photos#show #{{ id: /[A-Z]\d{5}/ }}"
         ], output
       end
 
@@ -219,7 +220,7 @@ module ActionDispatch
 
         assert_equal [
           "Prefix Verb URI Pattern        Controller#Action",
-          "       GET  /foo/:id(.:format) MountedRackApp {:id=>/[A-Z]\\d{5}/}"
+          "       GET  /foo/:id(.:format) MountedRackApp #{{ id: /[A-Z]\d{5}/ }}"
         ], output
       end
 
@@ -260,7 +261,7 @@ module ActionDispatch
 
         assert_equal [
           "          Prefix Verb URI Pattern Controller#Action",
-          "mounted_rack_app      /foo        MountedRackApp {:constraint=>( my custom constraint )}"
+          "mounted_rack_app      /foo        MountedRackApp #{{ constraint: constraint.new }}"
         ], output
       end
 
@@ -293,7 +294,7 @@ module ActionDispatch
 
         assert_equal [
           "Prefix Verb URI Pattern       Controller#Action",
-          "   foo GET  /foo(.:format)    redirect(301, /foo/bar) {:subdomain=>\"admin\"}",
+          "   foo GET  /foo(.:format)    redirect(301, /foo/bar) #{{ subdomain: "admin" }}",
           "   bar GET  /bar(.:format)    redirect(307, path: /foo/bar)",
           "foobar GET  /foobar(.:format) redirect(301)"
         ], output

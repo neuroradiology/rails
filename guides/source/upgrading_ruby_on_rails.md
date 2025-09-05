@@ -1,4 +1,4 @@
-**DO NOT READ THIS FILE ON GITHUB, GUIDES ARE PUBLISHED ON https://guides.rubyonrails.org.**
+**DO NOT READ THIS FILE ON GITHUB, GUIDES ARE PUBLISHED ON <https://guides.rubyonrails.org>.**
 
 Upgrading Ruby on Rails
 =======================
@@ -54,7 +54,7 @@ You can find a list of all released Rails gems [here](https://rubygems.org/gems/
 
 ### The Update Task
 
-Rails provides the `rails app:update` command. After updating the Rails version
+Rails provides the `bin/rails app:update` command. After updating the Rails version
 in the `Gemfile`, run this command.
 This will help you with the creation of new files and changes of old files in an
 interactive session.
@@ -75,7 +75,13 @@ Don't forget to review the difference, to see if there were any unexpected chang
 
 The new Rails version might have different configuration defaults than the previous version. However, after following the steps described above, your application would still run with configuration defaults from the *previous* Rails version. That's because the value for `config.load_defaults` in `config/application.rb` has not been changed yet.
 
-To allow you to upgrade to new defaults one by one, the update task has created a file `config/initializers/new_framework_defaults_X.Y.rb` (with the desired Rails version in the filename). You should enable the new configuration defaults by uncommenting them in the file; this can be done gradually over several deployments. Once your application is ready to run with new defaults, you can remove this file and flip the `config.load_defaults` value.
+To allow you to upgrade to new defaults one by one, the update task has created a file `config/initializers/new_framework_defaults_X_Y.rb` (with the desired Rails version in the filename). You should enable the new configuration defaults by uncommenting them in the file; this can be done gradually over several deployments. Once your application is ready to run with new defaults, you can remove this file and flip the `config.load_defaults` value.
+
+Upgrading from Rails 8.0 to Rails 8.1
+-------------------------------------
+
+For more information on changes made to Rails 8.1 please see the [release notes](8_1_release_notes.html).
+
 
 Upgrading from Rails 7.2 to Rails 8.0
 -------------------------------------
@@ -97,6 +103,60 @@ In Rails 7.2, all tests will respect the `queue_adapter` config if provided. Thi
 set the `queue_adapter` config to something other than `:test`, but written tests in a way that was dependent on the `TestAdapter`.
 
 If no config is provided, the `TestAdapter` will continue to be used.
+
+### `alias_attribute` now bypasses custom methods on the original attribute
+
+In Rails 7.2, `alias_attribute` now bypasses custom methods defined on the original attribute and directly accesses the underlying database value. This change was announced via deprecation warnings in Rails 7.1.
+
+**Before (Rails 7.1):**
+
+```ruby
+class User < ActiveRecord::Base
+  def email
+    "custom_#{super}"
+  end
+
+  alias_attribute :username, :email
+end
+
+user = User.create!(email: "test@example.com")
+user.username
+# => "custom_test@example.com"
+```
+
+**After (Rails 7.2):**
+
+```ruby
+user = User.create!(email: "test@example.com")
+user.username
+# => "test@example.com"  # Raw database value
+```
+
+If you received the deprecation warning "Since Rails 7.2 `#{method_name}` will not be calling `#{target_name}` anymore", you should manually define the alias method:
+
+```ruby
+class User < ActiveRecord::Base
+  def email
+    "custom_#{super}"
+  end
+
+  def username
+    email  # This will call the custom email method
+  end
+end
+```
+
+Alternatively, you can use `alias_method`:
+
+```ruby
+class User < ActiveRecord::Base
+  def email
+    "custom_#{super}"
+  end
+
+  alias_method :username, :email
+end
+```
 
 Upgrading from Rails 7.0 to Rails 7.1
 -------------------------------------
@@ -245,7 +305,7 @@ config.action_mailer.preview_paths << "#{Rails.root}/lib/mailer_previews"
 
 ### `config.i18n.raise_on_missing_translations = true` now raises on any missing translation.
 
-Previously it would only raise when called in a view or controller. Now it will raise anytime `I18n.t` is provided an unrecognised key.
+Previously it would only raise when called in a view or controller. Now it will raise anytime `I18n.t` is provided an unrecognized key.
 
 ```ruby
 # with config.i18n.raise_on_missing_translations = true
@@ -258,7 +318,7 @@ I18n.t("missing.key") # didn't raise in 7.0, raises in 7.1
 I18n.t("missing.key") # didn't raise in 7.0, raises in 7.1
 ```
 
-If you don't want this behaviour, you can set `config.i18n.raise_on_missing_translations = false`:
+If you don't want this behavior, you can set `config.i18n.raise_on_missing_translations = false`:
 
 ```ruby
 # with config.i18n.raise_on_missing_translations = false
@@ -359,6 +419,12 @@ versions, there are two scenarios to consider:
     config.active_record.encryption.hash_digest_class = OpenSSL::Digest::SHA1
     ```
 
+    If all of your data was encrypted non-deterministicly (the default unless `encrypts` is passed `deterministic: true`, you can instead configure SHA-256 for Active Record Encryption as in scenario 2 below and also allow columns previously encrypted with SHA-1 to be decrypted by setting:
+
+    ```ruby
+    config.active_record.encryption.support_sha1_for_non_deterministic_encryption = true
+    ```
+
 2. If you have `config.active_support.key_generator_hash_digest_class` configured as SHA-256 (the new default
    in 7.0), then you need to configure SHA-256 for Active Record Encryption:
 
@@ -381,7 +447,7 @@ by the aforementioned bug, this configuration should be enabled:
 config.active_record.encryption.support_sha1_for_non_deterministic_encryption = true
 ```
 
-If you are working with encrypted data, please carefully review the above.
+**If you are working with encrypted data, please carefully review the above.**
 
 ### New ways to handle exceptions in Controller Tests, Integration Tests, and System Tests
 
@@ -740,7 +806,7 @@ You can invalidate the cache either by touching the product, or changing the cac
 Rails 7.0 changed some default values for some column types. To avoid that application upgrading from 6.1 to 7.0
 load the current schema using the new 7.0 defaults, Rails now includes the version of the framework in the schema dump.
 
-Before loading the schema for the first time in Rails 7.0, make sure to run `rails app:update` to ensure that the
+Before loading the schema for the first time in Rails 7.0, make sure to run `bin/rails app:update` to ensure that the
 version of the schema is included in the schema dump.
 
 The schema file will look like this:
@@ -791,7 +857,7 @@ This used to return a hash on which you could access values with String keys. Th
 You can call `with_indifferent_access` on the return value of `config_for` if you still want to access values with String keys, e.g.:
 
 ```ruby
-Rails.application.config_for(:example).with_indifferent_access.dig('options', 'key')
+Rails.application.config_for(:example).with_indifferent_access.dig("options", "key")
 ```
 
 ### Response's Content-Type when using `respond_to#any`
@@ -805,13 +871,13 @@ Example:
 ```ruby
 def my_action
   respond_to do |format|
-    format.any { render(json: { foo: 'bar' }) }
+    format.any { render(json: { foo: "bar" }) }
   end
 end
 ```
 
 ```ruby
-get('my_action.csv')
+get("my_action.csv")
 ```
 
 Previous behavior was returning a `text/csv` response's Content-Type which is inaccurate since a JSON response is being rendered.
@@ -1027,7 +1093,7 @@ you need to allow them like this:
 ```ruby
 # config/environments/development.rb
 
-config.hosts << 'dev.myapp.com'
+config.hosts << "dev.myapp.com"
 config.hosts << /[a-z0-9-]+\.myapp\.com/ # Optionally, regexp is allowed as well
 ```
 
@@ -1651,7 +1717,7 @@ class StreamingSupport
   def process(name)
     super(name)
   rescue ArgumentError => e
-    if e.message == 'uncaught throw :warden'
+    if e.message == "uncaught throw :warden"
       throw :warden
     else
       raise e
@@ -2088,7 +2154,7 @@ will be serialized as strings, and `Hash`es will have their keys stringified.
 class CookiesController < ApplicationController
   def set_cookie
     cookies.encrypted[:expiration_date] = Date.tomorrow # => Thu, 20 Mar 2014
-    redirect_to action: 'read_cookie'
+    redirect_to action: "read_cookie"
   end
 
   def read_cookie
@@ -2139,9 +2205,10 @@ If your application currently depends on MultiJSON directly, you have a few opti
 
 2. Migrate away from MultiJSON by using `obj.to_json`, and `JSON.parse(str)` instead.
 
-WARNING: Do not simply replace `MultiJson.dump` and `MultiJson.load` with
-`JSON.dump` and `JSON.load`. These JSON gem APIs are meant for serializing and
-deserializing arbitrary Ruby objects and are generally [unsafe](https://ruby-doc.org/stdlib-2.2.2/libdoc/json/rdoc/JSON.html#method-i-load).
+WARNING: Do not simply replace `MultiJson.load` with
+`JSON.load` as that API is meant for deserializing arbitrary Ruby objects and
+is generally [unsafe](https://docs.ruby-lang.org/en/master/JSON.html#method-i-load).
+Prefer to use `JSON.parse`.
 
 #### JSON gem compatibility
 
@@ -2156,7 +2223,7 @@ Rails-specific features. For example:
 ```ruby
 class FooBar
   def as_json(options = nil)
-    { foo: 'bar' }
+    { foo: "bar" }
   end
 end
 ```
@@ -2164,7 +2231,7 @@ end
 ```irb
 irb> FooBar.new.to_json
 => "{\"foo\":\"bar\"}"
-irb> JSON.generate(FooBar.new, quirks_mode: true)
+irb> JSON.generate(FooBar.new)
 => "\"#<FooBar:0x007fa80a481610>\""
 ```
 
@@ -2249,7 +2316,7 @@ included in the newly introduced `ActiveRecord::FixtureSet.context_class`, in
 ```ruby
 module FixtureFileHelpers
   def file_sha(path)
-    OpenSSL::Digest::SHA256.hexdigest(File.read(Rails.root.join('test/fixtures', path)))
+    OpenSSL::Digest::SHA256.hexdigest(File.read(Rails.root.join("test/fixtures", path)))
   end
 end
 
@@ -2284,10 +2351,10 @@ methods directly on the `Relation`.
 
 ```ruby
 # Instead of this
-Author.where(name: 'Hank Moody').compact!
+Author.where(name: "Hank Moody").compact!
 
 # Now you have to do this
-authors = Author.where(name: 'Hank Moody').to_a
+authors = Author.where(name: "Hank Moody").to_a
 authors.compact!
 ```
 
@@ -2303,9 +2370,9 @@ Before:
 
 ```ruby
 class User < ActiveRecord::Base
-  default_scope { where state: 'pending' }
-  scope :active, -> { where state: 'active' }
-  scope :inactive, -> { where state: 'inactive' }
+  default_scope { where state: "pending" }
+  scope :active, -> { where state: "active" }
+  scope :inactive, -> { where state: "inactive" }
 end
 
 User.all
@@ -2314,7 +2381,7 @@ User.all
 User.active
 # SELECT "users".* FROM "users" WHERE "users"."state" = 'active'
 
-User.where(state: 'inactive')
+User.where(state: "inactive")
 # SELECT "users".* FROM "users" WHERE "users"."state" = 'inactive'
 ```
 
@@ -2322,9 +2389,9 @@ After:
 
 ```ruby
 class User < ActiveRecord::Base
-  default_scope { where state: 'pending' }
-  scope :active, -> { where state: 'active' }
-  scope :inactive, -> { where state: 'inactive' }
+  default_scope { where state: "pending" }
+  scope :active, -> { where state: "active" }
+  scope :inactive, -> { where state: "inactive" }
 end
 
 User.all
@@ -2333,7 +2400,7 @@ User.all
 User.active
 # SELECT "users".* FROM "users" WHERE "users"."state" = 'pending' AND "users"."state" = 'active'
 
-User.where(state: 'inactive')
+User.where(state: "inactive")
 # SELECT "users".* FROM "users" WHERE "users"."state" = 'pending' AND "users"."state" = 'inactive'
 ```
 
@@ -2343,9 +2410,9 @@ To get the previous behavior it is needed to explicitly remove the
 
 ```ruby
 class User < ActiveRecord::Base
-  default_scope { where state: 'pending' }
-  scope :active, -> { unscope(where: :state).where(state: 'active') }
-  scope :inactive, -> { rewhere state: 'inactive' }
+  default_scope { where state: "pending" }
+  scope :active, -> { unscope(where: :state).where(state: "active") }
+  scope :inactive, -> { rewhere state: "inactive" }
 end
 
 User.all
@@ -2470,7 +2537,7 @@ being used, you can update your form to use the `PUT` method instead:
 <%= form_for [ :update_name, @user ], method: :put do |f| %>
 ```
 
-For more on PATCH and why this change was made, see [this post](https://weblog.rubyonrails.org/2012/2/26/edge-rails-patch-is-the-new-primary-http-method-for-updates/)
+For more on PATCH and why this change was made, see [this post](https://rubyonrails.org/2012/2/26/edge-rails-patch-is-the-new-primary-http-method-for-updates)
 on the Rails blog.
 
 #### A note about media types
@@ -2498,7 +2565,7 @@ end
 
 ```ruby
 # config/initializers/json_patch.rb
-Mime::Type.register 'application/json-patch+json', :json_patch
+Mime::Type.register "application/json-patch+json", :json_patch
 ```
 
 As JSON Patch was only recently made into an RFC, there aren't a lot of great
@@ -2575,11 +2642,11 @@ Rails 4.0 no longer supports loading plugins from `vendor/plugins`. You must rep
 
     ```ruby
     class CatalogCategory < ActiveRecord::Base
-      has_and_belongs_to_many :catalog_products, join_table: 'catalog_categories_catalog_products'
+      has_and_belongs_to_many :catalog_products, join_table: "catalog_categories_catalog_products"
     end
 
     class CatalogProduct < ActiveRecord::Base
-      has_and_belongs_to_many :catalog_categories, join_table: 'catalog_categories_catalog_products'
+      has_and_belongs_to_many :catalog_categories, join_table: "catalog_categories_catalog_products"
     end
     ```
 
@@ -2608,8 +2675,8 @@ Rails 4.0 extracted Active Resource to its own gem. If you still need the featur
 
     ```ruby
     # config/initializers/secret_token.rb
-    Myapp::Application.config.secret_token = 'existing secret token'
-    Myapp::Application.config.secret_key_base = 'new secret key base'
+    Myapp::Application.config.secret_token = "existing secret token"
+    Myapp::Application.config.secret_key_base = "new secret key base"
     ```
 
     Please note that you should wait to set `secret_key_base` until you have 100% of your userbase on Rails 4.x and are reasonably sure you will not need to rollback to Rails 3.x. This is because cookies signed based on the new `secret_key_base` in Rails 4.x are not backwards compatible with Rails 3.x. You are free to leave your existing `secret_token` in place, not set the new `secret_key_base`, and ignore the deprecation warnings until you are reasonably sure that your upgrade is otherwise complete.
@@ -2644,13 +2711,13 @@ Rails 4.0 extracted Active Resource to its own gem. If you still need the featur
 * Rails 4.0 raises an `ArgumentError` if clashing named routes are defined. This can be triggered by explicitly defined named routes or by the `resources` method. Here are two examples that clash with routes named `example_path`:
 
     ```ruby
-    get 'one' => 'test#example', as: :example
-    get 'two' => 'test#example', as: :example
+    get "one" => "test#example", as: :example
+    get "two" => "test#example", as: :example
     ```
 
     ```ruby
     resources :examples
-    get 'clashing/:id' => 'test#example', as: :example
+    get "clashing/:id" => "test#example", as: :example
     ```
 
     In the first case, you can simply avoid using the same name for multiple
@@ -2661,26 +2728,26 @@ Rails 4.0 extracted Active Resource to its own gem. If you still need the featur
 * Rails 4.0 also changed the way unicode character routes are drawn. Now you can draw unicode character routes directly. If you already draw such routes, you must change them, for example:
 
     ```ruby
-    get Rack::Utils.escape('こんにちは'), controller: 'welcome', action: 'index'
+    get Rack::Utils.escape("こんにちは"), controller: "welcome", action: "index"
     ```
 
     becomes
 
     ```ruby
-    get 'こんにちは', controller: 'welcome', action: 'index'
+    get "こんにちは", controller: "welcome", action: "index"
     ```
 
 * Rails 4.0 requires that routes using `match` must specify the request method. For example:
 
     ```ruby
     # Rails 3.x
-    match '/' => 'root#index'
+    match "/" => "root#index"
 
     # becomes
-    match '/' => 'root#index', via: :get
+    match "/" => "root#index", via: :get
 
     # or
-    get '/' => 'root#index'
+    get "/" => "root#index"
     ```
 
 * Rails 4.0 has removed `ActionDispatch::BestStandardsSupport` middleware, `<!DOCTYPE html>` already triggers standards mode per https://msdn.microsoft.com/en-us/library/jj676915(v=vs.85).aspx and ChromeFrame header has been moved to `config.action_dispatch.default_headers`.
@@ -2698,8 +2765,8 @@ Rails 4.0 extracted Active Resource to its own gem. If you still need the featur
 
     ```ruby
     config.action_dispatch.default_headers = {
-      'X-Frame-Options' => 'SAMEORIGIN',
-      'X-XSS-Protection' => '1; mode=block'
+      "X-Frame-Options" => "SAMEORIGIN",
+      "X-XSS-Protection" => "1; mode=block"
     }
     ```
 
@@ -2847,7 +2914,7 @@ If your application is using an "/assets" route for a resource you may want to c
 
 ```ruby
 # Defaults to '/assets'
-config.assets.prefix = '/asset-files'
+config.assets.prefix = "/asset-files"
 ```
 
 ### config/environments/development.rb
@@ -2896,7 +2963,7 @@ You can help test performance with these additions to your test environment:
 # Configure static asset server for tests with Cache-Control for performance
 config.public_file_server.enabled = true
 config.public_file_server.headers = {
-  'Cache-Control' => 'public, max-age=3600'
+  "Cache-Control" => "public, max-age=3600"
 }
 ```
 
@@ -2926,7 +2993,7 @@ You need to change your session key to something new, or remove all sessions:
 
 ```ruby
 # in config/initializers/session_store.rb
-AppName::Application.config.session_store :cookie_store, key: 'SOMETHINGNEW'
+AppName::Application.config.session_store :cookie_store, key: "SOMETHINGNEW"
 ```
 
 or

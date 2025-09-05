@@ -25,10 +25,9 @@ class SerializersTest < ActiveSupport::TestCase
       DummyValueObject.new(hash["value"])
     end
 
-    private
-      def klass
-        DummyValueObject
-      end
+    def klass
+      DummyValueObject
+    end
   end
 
   setup do
@@ -37,7 +36,7 @@ class SerializersTest < ActiveSupport::TestCase
   end
 
   teardown do
-    ActiveJob::Serializers._additional_serializers = @original_serializers
+    ActiveJob::Serializers.serializers = @original_serializers
   end
 
   test "can't serialize unknown object" do
@@ -61,7 +60,7 @@ class SerializersTest < ActiveSupport::TestCase
       ActiveJob::Serializers.deserialize(hash)
     end
     assert_equal(
-      'Serializer name is not present in the argument: {"_dummy_serializer"=>123, "_aj_symbol_keys"=>[]}',
+      "Serializer name is not present in the argument: #{{ "_dummy_serializer" => 123, "_aj_symbol_keys" => [] }}",
       error.message
     )
   end
@@ -85,7 +84,7 @@ class SerializersTest < ActiveSupport::TestCase
 
   test "adds new serializer" do
     ActiveJob::Serializers.add_serializers DummySerializer
-    assert ActiveJob::Serializers.serializers.include?(DummySerializer)
+    assert ActiveJob::Serializers.serializers.include?(DummySerializer.instance)
   end
 
   test "can't add serializer with the same key twice" do

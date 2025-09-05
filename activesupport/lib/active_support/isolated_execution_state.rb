@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-
 module ActiveSupport
   module IsolatedExecutionState # :nodoc:
     @isolation_level = nil
@@ -29,28 +28,27 @@ module ActiveSupport
         @isolation_level = level
       end
 
-      def unique_id
-        self[:__id__] ||= Object.new
-      end
-
       def [](key)
-        state[key]
+        if state = @scope.current.active_support_execution_state
+          state[key]
+        end
       end
 
       def []=(key, value)
+        state = (@scope.current.active_support_execution_state ||= {})
         state[key] = value
       end
 
       def key?(key)
-        state.key?(key)
+        @scope.current.active_support_execution_state&.key?(key)
       end
 
       def delete(key)
-        state.delete(key)
+        @scope.current.active_support_execution_state&.delete(key)
       end
 
       def clear
-        state.clear
+        @scope.current.active_support_execution_state&.clear
       end
 
       def context
@@ -63,11 +61,6 @@ module ActiveSupport
         # and streaming should be rethought.
         context.active_support_execution_state = other.active_support_execution_state.dup
       end
-
-      private
-        def state
-          context.active_support_execution_state ||= {}
-        end
     end
 
     self.isolation_level = :thread

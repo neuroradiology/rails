@@ -1,7 +1,11 @@
-## Rails 8.0.0.beta1 (September 26, 2024) ##
+## Rails 8.1.0.beta1 (September 04, 2025) ##
 
-*   Add an `identifier` to the event payload for the ActiveSupport::Notification `transmit_subscription_confirmation.action_cable` and `transmit_subscription_rejection.action_cable`.
+*   Allow passing composite channels to `ActionCable::Channel#stream_for` – e.g. `stream_for [ group, group.owner ]`
 
-    *Keith Schacht*
+    *hey-leon*
 
-Please check [7-2-stable](https://github.com/rails/rails/blob/7-2-stable/actioncable/CHANGELOG.md) for previous changes.
+*   Allow setting nil as subscription connection identifier for Redis.
+
+    *Nguyen Nguyen*
+
+Please check [8-0-stable](https://github.com/rails/rails/blob/8-0-stable/actioncable/CHANGELOG.md) for previous changes.

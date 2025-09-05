@@ -21,6 +21,25 @@ class JobSerializationTest < ActiveSupport::TestCase
     assert_equal "en", HelloJob.new.serialize["locale"]
   end
 
+  test "a deserialized job keeps its locale even if I18n.locale changes" do
+    old_locales = I18n.available_locales
+    begin
+      I18n.available_locales = [:en, :es]
+      I18n.locale = :es
+      payload = HelloJob.new.serialize
+      assert_equal "es", payload["locale"]
+
+      I18n.locale = :en
+
+      new_job = HelloJob.new
+      new_job.deserialize(payload)
+
+      assert_equal "es", new_job.serialize["locale"]
+    ensure
+      I18n.available_locales = old_locales
+    end
+  end
+
   test "serialize and deserialize are symmetric" do
     # Ensure `enqueued_at` does not change between serializations
     freeze_time
@@ -36,6 +55,17 @@ class JobSerializationTest < ActiveSupport::TestCase
     payload = JSON.dump(h2.serialize)
     h3 = HelloJob.deserialize(JSON.load(payload))
     assert_equal h2.serialize, h3.serialize
+  end
+
+  test "deserialize raises a specific exception on unknown `job_class`" do
+    payload = HelloJob.new.serialize
+
+    # Simulate the job class being missing, for example during rolling deploys when
+    # the server enqueues a new job but the job processor hasn't been restarted yet.
+    payload["job_class"] = "IDontExist"
+    assert_raises(ActiveJob::UnknownJobClassError) do
+      HelloJob.deserialize(payload)
+    end
   end
 
   test "deserialize sets locale" do

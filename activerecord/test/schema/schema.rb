@@ -105,8 +105,9 @@ ActiveRecord::Schema.define do
   end
 
   create_table :auto_id_tests, force: true, id: false do |t|
-    t.primary_key :auto_id
     t.integer     :value
+    t.timestamp   :published_at, default: -> { "CURRENT_TIMESTAMP" }
+    t.primary_key :auto_id
   end
 
   create_table :binaries, force: true do |t|
@@ -138,6 +139,7 @@ ActiveRecord::Schema.define do
     t.column :font_size, :integer, **default_zero
     t.column :difficulty, :integer, **default_zero
     t.column :cover, :string, default: "hard"
+    t.column :symbol_status, :string, default: "proposed"
     t.string :isbn
     t.string :external_id
     t.column :original_name, :string
@@ -262,6 +264,12 @@ ActiveRecord::Schema.define do
   create_table :cpk_posts, primary_key: [:title, :author], force: true do |t|
     t.string :title
     t.string :author
+  end
+
+  create_table :cpk_posts_tags, force: true do |t|
+    t.string :post_title
+    t.string :post_author
+    t.integer :tag_id
   end
 
   create_table :cpk_comments, force: true do |t|
@@ -425,6 +433,10 @@ ActiveRecord::Schema.define do
         t.index "(CONCAT_WS(`firm_name`, `name`, _utf8mb4' '))", name: "full_name_index"
       end
     end
+
+    if supports_disabling_indexes?
+      t.index [:firm_id, :client_of], name: "company_disabled_index", enabled: false
+    end
   end
 
   create_table :content, force: true do |t|
@@ -584,6 +596,11 @@ ActiveRecord::Schema.define do
 
   create_table :engines, force: true do |t|
     t.references :car, index: false
+  end
+
+  create_table :enrollments, force: true do |t|
+    t.integer  :program_id
+    t.integer  :member_id
   end
 
   create_table :entrants, force: true do |t|
@@ -809,6 +826,7 @@ ActiveRecord::Schema.define do
   end
 
   create_table :minimalistics, force: true do |t|
+    t.bigint :expires_at
   end
 
   create_table :mixed_case_monkeys, force: true, id: false do |t|
@@ -850,6 +868,7 @@ ActiveRecord::Schema.define do
     t.decimal :decimal_number_with_default, precision: 3, scale: 2, default: 2.78
     t.numeric :numeric_number
     t.float   :temperature
+    t.float   :temperature_with_limit, limit: 24
     t.decimal :decimal_number_big_precision, precision: 20
     t.decimal :atoms_in_universe, precision: 55, scale: 0
   end
@@ -1014,6 +1033,16 @@ ActiveRecord::Schema.define do
     t.decimal :discounted_price
   end
 
+  create_table :program_offerings, force: true do |t|
+    t.integer  :club_id
+    t.integer  :program_id
+    t.datetime :start_date
+  end
+
+  create_table :programs, force: true do |t|
+    t.string   :name
+  end
+
   add_check_constraint :products, "price > discounted_price", name: "products_price_check"
 
   create_table :product_types, force: true do |t|
@@ -1069,6 +1098,8 @@ ActiveRecord::Schema.define do
   create_table :rooms, force: true do |t|
     t.references :user
     t.references :owner
+    t.references :landlord
+    t.references :tenant
   end
 
   disable_referential_integrity do

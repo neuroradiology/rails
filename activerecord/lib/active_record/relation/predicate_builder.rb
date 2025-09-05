@@ -37,7 +37,7 @@ module ActiveRecord
 
     # Define how a class is converted to Arel nodes when passed to +where+.
     # The handler can be any object that responds to +call+, and will be used
-    # for any value that +===+ the class given. For example:
+    # for any value that <tt>===</tt> the class given. For example:
     #
     #     MyCustomDateRange = Struct.new(:start, :end)
     #     handler = proc do |column, range|
@@ -72,9 +72,17 @@ module ActiveRecord
       table.associated_table(table_name, &block).arel_table[column_name]
     end
 
+    def with(table)
+      other = dup
+      other.table = table
+      other
+    end
+
     protected
+      attr_writer :table
+
       def expand_from_hash(attributes, &block)
-        return ["1=0"] if attributes.empty?
+        return [Arel.sql("1=0", retryable: true)] if attributes.empty?
 
         attributes.flat_map do |key, value|
           if key.is_a?(Array) && key.size == 1

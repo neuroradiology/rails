@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-require "active_support/deprecation"
 
 module ActiveRecord
   include ActiveSupport::Deprecation::DeprecatedConstantAccessor
@@ -293,6 +292,14 @@ module ActiveRecord
   class NotNullViolation < StatementInvalid
   end
 
+  # Raised when a record cannot be inserted or updated because it would violate a check constraint.
+  class CheckViolation < StatementInvalid
+  end
+
+  # Raised when a record cannot be inserted or updated because it would violate an exclusion constraint.
+  class ExclusionViolation < StatementInvalid
+  end
+
   # Raised when a record cannot be inserted or updated because a value too long for a column type.
   class ValueTooLong < StatementInvalid
   end
@@ -339,15 +346,15 @@ module ActiveRecord
     class << self
       def db_error(db_name)
         NoDatabaseError.new(<<~MSG)
-          We could not find your database: #{db_name}. Available database configurations can be found in config/database.yml.
+          Database not found: #{db_name}. Available database configurations can be found in config/database.yml.
 
           To resolve this error:
 
-          - Did you not create the database, or did you delete it? To create the database, run:
+          - Create the database by running:
 
               bin/rails db:create
 
-          - Has the database name changed? Verify that config/database.yml contains the correct database name.
+          - Verify that config/database.yml contains the correct database name.
         MSG
       end
     end
@@ -490,6 +497,7 @@ module ActiveRecord
   #   end
   #
   #   relation = Task.all
+  #   relation.load
   #   relation.loaded? # => true
   #
   #   # Methods which try to mutate a loaded relation fail.
@@ -552,6 +560,11 @@ module ActiveRecord
   class Deadlocked < TransactionRollbackError
   end
 
+  # MissingRequiredOrderError is raised when a relation requires ordering but
+  # lacks any +order+ values in scope or any model order columns to use.
+  class MissingRequiredOrderError < ActiveRecordError
+  end
+
   # IrreversibleOrderError is raised when a relation's order is too complex for
   # +reverse_order+ to automatically reverse.
   class IrreversibleOrderError < ActiveRecordError
@@ -608,6 +621,9 @@ module ActiveRecord
   # DatabaseVersionError will be raised when the database version is not supported, or when
   # the database version cannot be determined.
   class DatabaseVersionError < ActiveRecordError
+  end
+
+  class DeprecatedAssociationError < ActiveRecordError
   end
 end
 

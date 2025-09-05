@@ -126,18 +126,8 @@ module ActiveRecord
         end
       end
 
-      if Thread.respond_to?(:each_caller_location)
-        def query_source_location
-          Thread.each_caller_location do |location|
-            frame = backtrace_cleaner.clean_frame(location)
-            return frame if frame
-          end
-          nil
-        end
-      else
-        def query_source_location
-          backtrace_cleaner.clean(caller(1).lazy).first
-        end
+      def query_source_location
+        backtrace_cleaner.first_clean_frame
       end
 
       def filter(name, value)
